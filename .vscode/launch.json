@@ -1,0 +1,83 @@
+{
+  "version": "0.2.0",
+  "inputs": [
+    { "id": "code", "description": "Code", "type": "promptString" },
+  ],
+  "configurations": [{
+    "name": "mcp",
+    "type": "node",
+    "request": "launch",
+    "program": "${workspaceFolder}/node_modules/@modelcontextprotocol/inspector/cli/build/cli.js",
+    "args": ["--config", ".mcp.json"]
+  }, {
+    "name": "authen-authorize",
+    "type": "node",
+    "request": "launch",
+    "program": "${workspaceFolder}/node_modules/tsx/dist/cli.cjs",
+    "outputCapture": "std",
+    "args": ["${workspaceRoot}/src/cli.ts", "authen-authorize"]
+  }, {
+    "name": "authen-oauth-token",
+    "type": "node",
+    "request": "launch",
+    "program": "${workspaceFolder}/node_modules/tsx/dist/cli.cjs",
+    "outputCapture": "std",
+    "args": ["${workspaceRoot}/src/cli.ts", "authen-oauth-token", "${input:code}"]
+  }, {
+    "name": "authen-user-info",
+    "type": "node",
+    "request": "launch",
+    "program": "${workspaceFolder}/node_modules/tsx/dist/cli.cjs",
+    "outputCapture": "std",
+    "args": ["${workspaceRoot}/src/cli.ts", "authen-user-info"]
+  }, {
+    "name": "wiki-space-list",
+    "type": "node",
+    "request": "launch",
+    "program": "${workspaceFolder}/node_modules/tsx/dist/cli.cjs",
+    "outputCapture": "std",
+    "args": ["${workspaceRoot}/src/cli.ts", "wiki-space-list"]
+  }, {
+    "name": "wiki-space-node-list",
+    "type": "node",
+    "request": "launch",
+    "program": "${workspaceFolder}/node_modules/tsx/dist/cli.cjs",
+    "outputCapture": "std",
+    "args": ["${workspaceRoot}/src/cli.ts", "wiki-space-node-list", "--space-id=7499341159760691232"]
+  }, {
+    "name": "wiki-space-get-node",
+    "type": "node",
+    "request": "launch",
+    "program": "${workspaceFolder}/node_modules/tsx/dist/cli.cjs",
+    "outputCapture": "std",
+    "args": ["${workspaceRoot}/src/cli.ts", "wiki-space-get-node", "--token=O8jNwZiFNihMjrkadLTlAdpxgld"]
+  }, {
+    "name": "wiki-search",
+    "type": "node",
+    "request": "launch",
+    "program": "${workspaceFolder}/node_modules/tsx/dist/cli.cjs",
+    "outputCapture": "std",
+    "args": ["${workspaceRoot}/src/cli.ts", "wiki-search", "--query=business"]
+  }, {
+    "name": "docx-document-block-list",
+    "type": "node",
+    "request": "launch",
+    "program": "${workspaceFolder}/node_modules/tsx/dist/cli.cjs",
+    "outputCapture": "std",
+    "args": ["${workspaceRoot}/src/cli.ts", "docx-document-block-list", "--document-id=KejddvzgUowq0KxwK3llXPfwgsg"]
+  }, {
+    "name": "docx-document-export",
+    "type": "node",
+    "request": "launch",
+    "program": "${workspaceFolder}/node_modules/tsx/dist/cli.cjs",
+    "outputCapture": "std",
+    "args": ["${workspaceRoot}/src/cli.ts", "docx-document-export", "--document-id=KejddvzgUowq0KxwK3llXPfwgsg", "--path=README.md"]
+  }, {
+    "name": "docx-document-import",
+    "type": "node",
+    "request": "launch",
+    "program": "${workspaceFolder}/node_modules/tsx/dist/cli.cjs",
+    "outputCapture": "std",
+    "args": ["${workspaceRoot}/src/cli.ts", "docx-document-import", "--document-id=KejddvzgUowq0KxwK3llXPfwgsg", "--path=README.md"]
+  }]
+}

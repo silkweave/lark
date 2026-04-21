@@ -1,0 +1,6 @@
+node_modules/
+build/
+.DS_Store
+.npmrc
+lark.json
+output.md
