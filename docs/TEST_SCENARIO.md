@@ -1,17 +1,17 @@
-# Test scenario: reflex + history + webhook (v1.9.0)
+# Test scenario: reflex + history + webhook (v1.10.0)
 
-Paste this to a fresh Claude Code session with the `lark` MCP server connected, in this repo. Goal: exercise every code path touched this session — persisted reflex API key, config-time and start-time validation, the shared cross-process history log, reflex context-awareness, and webhook dispatch — plus the edge cases each one can fail on.
+Paste this to a fresh Claude Code session with the `lark` MCP server connected, in this repo. Goal: exercise the reflex/history/webhook code paths — persisted reflex API key, config validation, the shared cross-process history log, reflex context-awareness, and webhook dispatch — plus the edge cases each one can fail on. For the watcher control gateway itself (subscription CRUD over the socket, streaming, `lark-listen`, reconnect, watcher-down behavior), run [GATEWAY_TEST_SCENARIO.md](./GATEWAY_TEST_SCENARIO.md) — it's the companion to this doc.
 
-Prerequisite: `lark-serve` must be running (VS Code "lark-serve" debug config, or `pnpm serve --reflex --playbook ./docs/PLAYBOOK.md`) against a real Lark chat the bot is in, with at least one `EventSubscriptionCreate` pointed at that chat. Check `EventWatchStatus` first — `externalPid` should be set and `reflex.hasApiKey` should read `true`.
+Prerequisite: `lark-serve` must be running (VS Code "lark-serve" debug config, or `pnpm serve --reflex --playbook ./docs/PLAYBOOK.md`) against a real Lark chat the bot is in, with at least one `EventSubscriptionCreate` pointed at that chat. Check `EventWatchStatus` first — `running: true` with a `pid`, `wsConnected: true`, and `reflex.hasApiKey: true`. Note: since v1.10.0, `EventReflexConfigure` and all `EventSubscription*` mutations are applied live on the running watcher over its control gateway — they hard-fail with a start hint when the watcher is down, so start it before configuring.
 
 ## 1. Config validation (should fail loudly, not silently)
 
-1a. Call `EventReflexConfigure` with `enabled: true` and no `apiKey`, on a fresh config where none is set (temporarily rename `~/.silkweave-lark.json`'s `watcher.reflex.apiKey` out, or just read current config first via `EventSubscriptionList`/`EventWatchStatus` to confirm a key already exists — if one exists, this test needs a way to null it out; simplest is to call `EventReflexConfigure` with `apiKey: ""` and `enabled: true` in the same call).
-   - **Expect:** the action throws `Reflex cannot be enabled without an apiKey...` and does NOT persist the change (verify via `EventWatchStatus` that `reflex.enabled` is unchanged from before).
+1a. Call `EventReflexConfigure` with `enabled: true` and no `apiKey`, on a fresh config where none is set (read current config first via `EventWatchStatus` to confirm whether a key exists — if one does, call `EventReflexConfigure` with `apiKey: ""` and `enabled: true` in the same call to exercise the same guard).
+   - **Expect:** the action fails with a `conflict` error (`Reflex cannot be enabled without an apiKey...`) and does NOT persist the change (verify via `EventWatchStatus` that `reflex.enabled` is unchanged from before).
 
-1b. Restore a valid `apiKey` via `EventReflexConfigure`, confirm `EventWatchStatus.reflex.hasApiKey === true` and it's consistent regardless of which process you ask (this was the original bug — status used to read `process.env` of whichever process answered, giving different answers from the MCP server vs. `lark-serve`).
+1b. Restore a valid `apiKey` via `EventReflexConfigure`, confirm `EventWatchStatus.reflex.hasApiKey === true` and it's consistent regardless of which process you ask (this was the original bug — status used to read `process.env` of whichever process answered, giving different answers from the MCP server vs. `lark-serve`). Since v1.10.0 this applies live with no restart — the watcher itself persisted the change.
 
-1c. Try to start a *second* watcher (e.g. `EventWatchStart` while `lark-serve` is already running externally) — expect the pre-existing "already running in process N" error, unaffected by this session's changes. This is a regression check, not new behavior.
+1c. Try to start a *second* watcher (run `pnpm serve` in another shell while `lark-serve` is already running) — expect it to refuse: the "already running in process N" pidfile error, backed by the gateway's own socket-liveness guard. This is a regression check.
 
 ## 2. Reflex classification, all three categories
 
@@ -58,11 +58,11 @@ require('http').createServer((req, res) => {
 "
 ```
 
-4a. Update (delete + recreate, since there's no `EventSubscriptionUpdate` action) the subscription with `webhookUrl: "http://localhost:8091"` and a `webhookSecret`. Send a matching message, and confirm:
+4a. Update the subscription in place with `EventSubscriptionUpdate { id, webhookUrl: "http://localhost:8091", webhookSecret: "<secret>" }` (id-stable — same `id` comes back; no delete+recreate needed since v1.10.0). Send a matching message, and confirm:
    - The listener receives a POST within ~10s with `Content-Type: application/json`, header `X-Silkweave-Signature` equal to the configured secret, and a body shaped `{ subscriptionId, event, history }` where `event` matches the `MessageEventRecord` shape (same fields as `EventList` entries) and `history` is an array of up to 20 entries, oldest first, excluding the triggering message itself.
    - `EventWatchStatus.counters.dispatched` incremented.
 
-4b. **Failure path**: point `webhookUrl` at something that will fail (e.g. `http://localhost:1` — nothing listening, or kill the listener from 4a), send another matching message, and confirm `counters.errors` increments and `lastError` is set to something like `fetch failed`/`webhook responded 5xx`, and — critically — that this does NOT crash the watcher or block subsequent events (send a second message right after and confirm it's still processed normally).
+4b. **Failure path**: point `webhookUrl` at something that will fail via `EventSubscriptionUpdate` (e.g. `http://localhost:1` — nothing listening, or kill the listener from 4a), send another matching message, and confirm `counters.errors` increments and `lastError` is set to something like `fetch failed`/`webhook responded 5xx`, and — critically — that this does NOT crash the watcher or block subsequent events (send a second message right after and confirm it's still processed normally).
 
 4c. **Both mechanisms at once**: if feasible, set both `onEventCommand` (e.g. `echo "got it" >> /tmp/dispatch-test.log`) and `webhookUrl` on the same subscription, send one matching message, and confirm BOTH fire for the same event (check the log file AND the webhook listener both got hit).
 
@@ -70,7 +70,7 @@ require('http').createServer((req, res) => {
 
 ## 5. Cleanup after testing
 
-- Remove or fix the test subscription's `onEventCommand`/`webhookUrl` if you don't want them live afterward (`EventSubscriptionDelete` + recreate cleanly, or leave as-is if intentional).
+- Remove or fix the test subscription's `onEventCommand`/`webhookUrl` if you don't want them live afterward (`EventSubscriptionUpdate` with `null` clears just those fields — e.g. `{ id, webhookUrl: null, webhookSecret: null }` — or `EventSubscriptionDelete` to drop the subscription entirely).
 - Kill any local test HTTP listener from section 4.
 - If `historyLimit` was changed in 3c, confirm it's back to your intended default.
 - Note in your summary: which sections passed, which didn't, and for anything that failed — the actual observed behavior vs. expected, plus whatever `~/.silkweave-lark.history.jsonl` / `EventList` / `EventWatchStatus` showed at the time (don't just say "reflex didn't respond" — show the counters and the last few log lines).

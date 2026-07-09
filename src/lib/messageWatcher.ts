@@ -1,16 +1,16 @@
 import { Domain, EventDispatcher, LoggerLevel, WSClient } from '@larksuiteoapi/node-sdk'
 import { spawn } from 'child_process'
 import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from 'fs'
-import { homedir } from 'os'
-import { join } from 'path'
 import { TENANT_USER_ID, TokenClient } from '../classes/TokenClient.js'
-import { MessageEventRecord, MessageSubscription, WatcherStatus } from '../types/events.js'
+import { MessageEventRecord, MessageSubscription, ReflexConfig, WatcherStatus } from '../types/events.js'
+import { ReflexInput, ReflexView, StreamReflexInfo, SubscriptionInput, SubscriptionPatch } from '../types/gateway.js'
 import { fetchLark } from './api.js'
 import { appendHistory, readHistory } from './history.js'
 import { runReflex } from './reflex.js'
-import { clearWatcherStatus, HEARTBEAT_MS, isProcessAlive, PID_PATH, writeWatcherStatus } from './watcherStatus.js'
+import { applySubscriptionPatch, GatewayError, GatewayHost, WatcherGateway } from './watcherGateway.js'
+import { clearWatcherStatus, EVENTS_PATH, HEARTBEAT_MS, isProcessAlive, PID_PATH, writeWatcherStatus } from './watcherStatus.js'
 
-export const EVENTS_PATH = join(homedir(), '.silkweave-lark.events.jsonl')
+export { EVENTS_PATH }
 const DISPATCH_HISTORY_LIMIT = 20
 
 /** All SDK log output goes to stderr — stdout is reserved for the MCP stdio protocol */
@@ -58,8 +58,10 @@ function extractText(message: MessageEvent['message']): string {
   }
 }
 
-export class MessageWatcher {
+export class MessageWatcher implements GatewayHost {
   private ws?: WSClient
+  private gateway?: WatcherGateway
+  private wsConnected = false
   private running = false
   private startedAt?: number
   private botOpenId?: string
@@ -84,6 +86,32 @@ export class MessageWatcher {
       throw new Error('Reflex is enabled but no Anthropic API key is configured — set one via EventReflexConfigure (apiKey) or disable reflex')
     }
     await client.assertValidTenantToken()
+    await this.fetchBotInfo(client)
+    await this.connectWs(client)
+    // Bind the control gateway after the WS is up: from here on, connectability to the socket = a live watcher.
+    this.gateway = new WatcherGateway(this)
+    try {
+      await this.gateway.start()
+    } catch (error) {
+      this.ws?.close({ force: true })
+      this.ws = undefined
+      this.wsConnected = false
+      this.gateway = undefined
+      throw error
+    }
+    writeFileSync(PID_PATH, String(process.pid))
+    this.running = true
+    this.startedAt = Date.now()
+    this.notRunningReason = undefined
+    // Persist a heartbeat so any other process (MCP server, CLI) can report accurate status without owning the watcher.
+    this.persistStatus()
+    this.heartbeat = setInterval(() => this.persistStatus(), HEARTBEAT_MS)
+    this.heartbeat.unref?.()
+    return this.getStatus()
+  }
+
+  /** Best-effort — without it, bot-mention detection falls back to matching by name only. */
+  private async fetchBotInfo(client: TokenClient) {
     try {
       const info = await fetchLark('GET', 'BotV3Info', undefined, undefined, client.tenantToken)
       this.botOpenId = info.bot?.open_id
@@ -91,6 +119,10 @@ export class MessageWatcher {
     } catch (error) {
       stderrLogger.warn('Could not fetch bot info, bot-mention detection will match by name only:', (error as Error).message)
     }
+  }
+
+  /** Establish the Lark WebSocket long-connection (a fresh WSClient — the SDK client is not restartable after close). */
+  private async connectWs(client: TokenClient) {
     const eventDispatcher = new EventDispatcher({ loggerLevel: LoggerLevel.error, logger: stderrLogger }).register({
       'im.message.receive_v1': async (data) => this.handleMessage(data as MessageEvent)
     })
@@ -102,15 +134,93 @@ export class MessageWatcher {
       logger: stderrLogger
     })
     await this.ws.start({ eventDispatcher })
-    writeFileSync(PID_PATH, String(process.pid))
-    this.running = true
-    this.startedAt = Date.now()
-    this.notRunningReason = undefined
-    // Persist a heartbeat so any other process (MCP server, CLI) can report accurate status without owning the watcher.
-    this.persistStatus()
-    this.heartbeat = setInterval(() => this.persistStatus(), HEARTBEAT_MS)
-    this.heartbeat.unref?.()
+    this.wsConnected = true
+  }
+
+  // ── GatewayHost: the gateway applies all runtime mutations through these (single applier, serialized on this event loop) ──
+
+  public getLiveStatus(): WatcherStatus {
     return this.getStatus()
+  }
+
+  public listSubscriptions(): MessageSubscription[] {
+    return new TokenClient(TENANT_USER_ID).getWatcherConfig().subscriptions
+  }
+
+  public addSubscription(input: SubscriptionInput): MessageSubscription {
+    const subscription: MessageSubscription = {
+      id: `sub_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+      chatId: input.chatId,
+      chatName: input.chatName,
+      mentionBot: input.mentionBot,
+      keywords: input.keywords,
+      onEventCommand: input.onEventCommand,
+      webhookUrl: input.webhookUrl,
+      webhookSecret: input.webhookSecret,
+      createdAt: new Date().toISOString()
+    }
+    new TokenClient(TENANT_USER_ID).addSubscription(subscription)
+    this.persistStatus()
+    return subscription
+  }
+
+  public updateSubscription(id: string, patch: SubscriptionPatch): MessageSubscription {
+    const updated = new TokenClient(TENANT_USER_ID).updateSubscription(id, (s) => applySubscriptionPatch(s, patch))
+    if (!updated) { throw new GatewayError('not_found', `No subscription found with id ${id}`) }
+    return updated
+  }
+
+  public removeSubscription(id: string): void {
+    if (!new TokenClient(TENANT_USER_ID).removeSubscription(id)) {
+      throw new GatewayError('not_found', `No subscription found with id ${id}`)
+    }
+    this.persistStatus()
+  }
+
+  public getReflex(): ReflexView {
+    return this.toReflexView(new TokenClient(TENANT_USER_ID).getWatcherConfig().reflex ?? {})
+  }
+
+  public setReflex(input: ReflexInput): ReflexView {
+    const client = new TokenClient(TENANT_USER_ID)
+    const reflex: ReflexConfig = { ...client.getWatcherConfig().reflex }
+    if (input.enabled !== undefined) { reflex.enabled = input.enabled }
+    if (input.apiKey !== undefined) { reflex.apiKey = input.apiKey }
+    if (input.model !== undefined) { reflex.model = input.model }
+    if (input.playbook !== undefined) { reflex.playbook = input.playbook }
+    if (input.reactionEmoji !== undefined) { reflex.reactionEmoji = input.reactionEmoji }
+    if (input.historyLimit !== undefined) { reflex.historyLimit = input.historyLimit }
+    if (reflex.enabled && !reflex.apiKey) {
+      throw new GatewayError('conflict', 'Reflex cannot be enabled without an apiKey — pass one now or set it in a prior call')
+    }
+    client.setWatcherConfig({ reflex })
+    this.persistStatus()
+    return this.toReflexView(reflex)
+  }
+
+  /** Tear down and re-establish the Lark WS connection, re-reading app credentials. The gateway and its streams stay up. */
+  public async reconnect(): Promise<{ reconnected: true; wsConnected: boolean }> {
+    this.wsConnected = false
+    if (this.ws) { this.ws.close({ force: true }) }
+    this.ws = undefined
+    const client = new TokenClient(TENANT_USER_ID)
+    if (!client.clientId || !client.clientSecret) { throw new GatewayError('unavailable', 'App credentials missing — call AuthenAuthorize first') }
+    await client.assertValidTenantToken()
+    await this.fetchBotInfo(client)
+    await this.connectWs(client)
+    this.persistStatus()
+    return { reconnected: true, wsConnected: this.wsConnected }
+  }
+
+  private toReflexView(reflex: ReflexConfig): ReflexView {
+    return {
+      enabled: reflex.enabled ?? false,
+      model: reflex.model ?? 'claude-haiku-4-5',
+      reactionEmoji: reflex.reactionEmoji ?? 'Typing',
+      hasApiKey: !!reflex.apiKey,
+      hasPlaybook: !!reflex.playbook?.trim(),
+      historyLimit: reflex.historyLimit ?? 15
+    }
   }
 
   /** Write the current in-memory status to the shared heartbeat file (see readWatcherStatus). */
@@ -125,13 +235,17 @@ export class MessageWatcher {
       counters: { ...this.counters },
       reflexCounters: { ...this.reflexCounters },
       lastError: this.lastError,
-      recent: [...this.recent]
+      recent: [...this.recent],
+      wsConnected: this.wsConnected,
+      activeStreams: this.gateway?.activeStreams ?? 0
     })
   }
 
   public stop(): WatcherStatus {
+    if (this.gateway) { this.gateway.stop(); this.gateway = undefined }
     if (this.ws) { this.ws.close({ force: true }) }
     this.ws = undefined
+    this.wsConnected = false
     this.running = false
     this.notRunningReason = 'stopped'
     if (this.heartbeat) { clearInterval(this.heartbeat); this.heartbeat = undefined }
@@ -154,6 +268,8 @@ export class MessageWatcher {
       lastError: this.lastError,
       notRunningReason: this.running ? undefined : this.notRunningReason,
       recent: [...this.recent],
+      wsConnected: this.running ? this.wsConnected : undefined,
+      activeStreams: this.running ? this.gateway?.activeStreams ?? 0 : undefined,
       reflex: reflex ? {
         enabled: reflex.enabled ?? false,
         model: reflex.model ?? 'claude-haiku-4-5',
@@ -192,8 +308,6 @@ export class MessageWatcher {
       // Re-read subscriptions on every event so changes made by other processes (e.g. the MCP server) apply live
       const config = new TokenClient(TENANT_USER_ID).getWatcherConfig()
       const matched = config.subscriptions.filter((s) => this.matches(s, message.chat_id, mentionedBot, text))
-      if (!matched.length) { return }
-      this.counters.matched++
       const record: MessageEventRecord = {
         receivedAt: new Date().toISOString(),
         subscriptionIds: matched.map((s) => s.id),
@@ -211,6 +325,12 @@ export class MessageWatcher {
         mentions: mentions.map((m) => ({ name: m.name, openId: m.id?.open_id })),
         createTime: message.create_time
       }
+      if (!matched.length) {
+        // Not persisted, but still fanned out to `deliver: 'all'` streams (full-transcript consumers).
+        this.gateway?.emitEvent({ event: record })
+        return
+      }
+      this.counters.matched++
       appendFileSync(EVENTS_PATH, JSON.stringify(record) + '\n')
       this.recent.unshift({ receivedAt: record.receivedAt, chatId: record.chatId, text: record.text.slice(0, 200) })
       this.recent = this.recent.slice(0, 10)
@@ -222,9 +342,13 @@ export class MessageWatcher {
       const reflex = config.reflex
       const senderOpenId = data.sender.sender_id?.open_id
       const fromUser = data.sender.sender_type === 'user' && (!this.botOpenId || senderOpenId !== this.botOpenId)
+      let reflexInfo: StreamReflexInfo | undefined
       if (reflex?.enabled && engaged && message.message_type === 'text' && fromUser) {
         const outcome = await runReflex(record, reflex, this.botName ?? 'the bot')
         if (outcome.category === 'trivial') { this.reflexCounters.trivial++ } else if (outcome.category === 'task') { this.reflexCounters.task++ } else if (outcome.category === 'ignore') { this.reflexCounters.ignored++ } else { this.reflexCounters.failed++ }
+        if (outcome.category) {
+          reflexInfo = { category: outcome.category, replied: !!outcome.replied, replyText: outcome.replyText, dispatched: outcome.dispatch }
+        }
         if (outcome.replied && outcome.replyMessageId) {
           appendHistory({
             chatId: record.chatId,
@@ -241,6 +365,8 @@ export class MessageWatcher {
       } else {
         this.dispatchMatched(matched, record)
       }
+      // Emit to streams only after processing completes, so the reflex outcome is known and included.
+      this.gateway?.emitEvent({ event: record, reflex: reflexInfo })
     } catch (error) {
       this.counters.errors++
       this.lastError = (error as Error).message

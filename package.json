@@ -13,6 +13,7 @@
   "types": "./build/index.d.mts",
   "bin": {
     "lark-cli": "./build/cli.mjs",
+    "lark-listen": "./build/listen.mjs",
     "lark-mcp": "./build/mcp.mjs",
     "lark-serve": "./build/serve.mjs"
   },
@@ -24,6 +25,10 @@
     "./cli": {
       "import": "./build/cli.mjs",
       "types": "./build/cli.d.mts"
+    },
+    "./listen": {
+      "import": "./build/listen.mjs",
+      "types": "./build/listen.d.mts"
     },
     "./mcp": {
       "import": "./build/mcp.mjs",
@@ -42,8 +47,10 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint",
     "check": "pnpm lint && pnpm typecheck",
+    "test": "tsx --test tests/*.test.ts",
     "cli": "tsx src/cli.ts",
-    "serve": "tsx src/serve.ts"
+    "serve": "tsx src/serve.ts",
+    "listen": "tsx src/listen.ts"
   },
   "dependencies": {
     "@larksuiteoapi/node-sdk": "^1.60.0",

@@ -6,10 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **Build:** `pnpm build` (uses tsdown, outputs to `build/`)
 - **Lint:** `pnpm lint` (eslint) + `pnpm typecheck` (tsc --noEmit), or both via `pnpm check`
+- **Test:** `pnpm test` (node:test via tsx, `tests/*.test.ts`; covers gateway framing/patch/filter logic and the file lock)
 - **Clean:** `pnpm clean`
 - **Run MCP server (dev):** `pnpm tsx src/mcp.ts`
 - **Run CLI (dev):** `pnpm tsx src/cli.ts`
-- **Run message watcher service (dev):** `pnpm serve` (standalone `lark-serve` entrypoint). Reflex flags: `--reflex`/`--no-reflex`, `--api-key <key>`, `--model <id>`, `--playbook <file>`, `--playbook-text <text>`, `--emoji <key>`, `--history-limit <n>` (also `--help`). Reflex needs an Anthropic API key persisted to `~/.silkweave-lark.json` (set via `--api-key` or `EventReflexConfigure`) — enabling reflex without one throws.
+- **Run message watcher service (dev):** `pnpm serve` (standalone `lark-serve` entrypoint). Starts **bare** — no arguments needed; everything is configured live over the control gateway afterward. Optional reflex pre-seed flags: `--reflex`/`--no-reflex`, `--api-key <key>`, `--model <id>`, `--playbook <file>`, `--playbook-text <text>`, `--emoji <key>`, `--history-limit <n>` (also `--help`). Reflex needs an Anthropic API key persisted to `~/.silkweave-lark.json` (set via `--api-key` or `EventReflexConfigure`) — enabling reflex without one throws.
+- **Stream watcher events (dev):** `pnpm listen` (standalone `lark-listen` entrypoint) — NDJSON event stream from the running watcher. Flags: `--all`, `--chat <id>`, `--subscription <id>`, `--mentioned`, `--history <n>`, `--since <iso>`.
 
 pnpm v11 config (`overrides` for the zod pin, `onlyBuiltDependencies`) lives in `pnpm-workspace.yaml`, not package.json.
 
@@ -19,18 +21,30 @@ This is `@silkweave/lark` — a Lark/Feishu document parser that exposes both an
 
 ### Entry Points
 
-- `src/index.ts` — library exports (DocxParser, TokenClient, API helpers)
+- `src/index.ts` — library exports (DocxParser, TokenClient, API helpers, watcherClient/`streamEvents`, gateway protocol types)
 - `src/mcp.ts` — MCP server (stdio transport via silkweave); **tools only — it never starts the message watcher** (the watcher is a separate `lark-serve` process, by design)
 - `src/cli.ts` — CLI (same actions, cli transport via silkweave)
 - `src/serve.ts` — standalone message watcher service (`lark-serve` bin); keeps event subscriptions alive independently of any MCP client
+- `src/listen.ts` — event streaming CLI (`lark-listen` bin); persistent NDJSON stream of watcher events over the control gateway
 
 ### Running the watcher (important architectural rule)
 
-The watcher is **always a separate OS process** (`lark-serve`). Starting/stopping a process is **never** an MCP tool and the MCP server never runs the watcher in-process — this avoids sharing the MCP stdio process, keeps the bot's lifecycle independent of any client session, and eliminates pidfile races. There are no `EventWatchStart`/`EventWatchStop` tools; `EventWatchStatus` is read-only.
+The watcher is **always a separate OS process** (`lark-serve`). Starting/stopping a process is **never** an MCP tool and the MCP server never runs the watcher in-process — this avoids sharing the MCP stdio process, keeps the bot's lifecycle independent of any client session, and eliminates pidfile races. There are no `EventWatchStart`/`EventWatchStop` tools.
 
-- **Start:** `lark-serve` (installed) or `pnpm serve` (dev), backgrounded from a shell or supervised by launchd/systemd/pm2 for always-on. Add `--reflex --api-key <key> --playbook <file>` for the fast-responder.
+- **Start:** `lark-serve` (installed) or `pnpm serve` (dev) — **bare, no arguments**; backgrounded from a shell or supervised by launchd/systemd/pm2 for always-on. Configuration happens live over the gateway; `--reflex --api-key <key> --playbook <file>` remain optional pre-seeds.
 - **Stop:** `Ctrl-C`, or `kill $(cat ~/.silkweave-lark.watcher.pid)`.
 - **AI agents:** spawn it as a background shell process, then poll `EventWatchStatus`; when it's down, `EventWatchStatus.notRunningReason` carries the exact start command (`START_HINT` in `src/lib/watcherStatus.ts`).
+
+### The control gateway (how everything talks to the watcher)
+
+While running, the watcher hosts a **WatcherGateway** (`src/lib/watcherGateway.ts`): a Unix-domain-socket server at `~/.silkweave-lark.watcher.sock` (0600, `SOCK_PATH` in `watcherStatus.ts`) speaking NDJSON request/response + event streaming (protocol types + limits in `src/types/gateway.ts`, version field `v: 1`). Methods: `ping`, `status` (live, includes `wsConnected`/`activeStreams`), `subscriptions.list/add/update/remove`, `reflex.get/set`, `reconnect` (rebuild the Lark WS without dropping streams), `subscribe`/`unsubscribe` (live event stream with filters, `sinceTs` replay from `events.jsonl`, per-stream backpressure → `overflow` frame + close, 15s heartbeats).
+
+Rules that matter when editing:
+
+- **The running watcher is the single applier of `watcher.*` config.** MCP `Event*` tools are thin clients (`src/lib/watcherClient.ts` — `gatewayRequest()`, `streamEvents()` with auto-reconnect + messageId dedupe). Mutations (`EventSubscriptionCreate/Update/Delete`, `EventReflexConfigure`, `EventWatchReconnect`) **hard-fail with `START_HINT` when the watcher is down** — never write config directly from a tool. Read-only tools (`EventWatchStatus`, `EventSubscriptionList`) fall back to file reads.
+- **Events are emitted to streams only after `handleMessage` finishes** (so the payload can carry the reflex outcome: `category`/`replied`/`replyText`/`dispatched`). Unmatched messages still go to `deliver: 'all'` streams but are never persisted — so `sinceTs` replay is gap-free for matched events only.
+- **`TokenClient` writes are file-locked + atomic.** Every mutation goes through `mutate()`: re-read `~/.silkweave-lark.json` under `withFileLock` (`src/lib/fileLock.ts`, O_EXCL lockfile, 10s stale takeover), apply to fresh state, temp+rename write. The store is multi-writer (MCP OAuth, watcher token refresh) — never bypass this with a plain `writeFileSync`.
+- **Subscription update patch semantics:** field present → set, `null` → clear, omitted → unchanged (`applySubscriptionPatch` in `watcherGateway.ts`).
 
 ### Core Classes
 
@@ -47,7 +61,7 @@ Actions are defined with `createAction()` from silkweave (zod schema for input, 
 - **Bitable** — Base apps, tables, fields, records (CRUD)
 - **Contact** — organization user listing
 - **Docx** — document export (to Markdown), import (from Markdown), block listing
-- **Event** — message subscriptions (create/list/delete), watcher lifecycle (start/stop/status), event log reading, reflex config (`EventReflexConfigure`)
+- **Event** — message subscriptions (create/update/list/delete), watcher status + WS reconnect, event log reading, reflex config (`EventReflexConfigure`) — all mutations routed through the watcher gateway
 - **Im** — chat listing, search, message send/reply
 - **Wiki** — space listing, node listing, node details, node creation
 
@@ -90,7 +104,7 @@ pnpm publish --no-git-checks
 ## Wrapup Config
 
 - check: `pnpm check` (run binaries directly or with `CI=true` — pnpm v11 prompts abort without a TTY)
-- test: skip (no test suite)
+- test: `pnpm test`
 - push: yes
 - version_bump: yes (single package)
 - publish: yes (public, `pnpm publish --no-git-checks`)

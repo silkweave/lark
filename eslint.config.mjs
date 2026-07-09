@@ -93,7 +93,7 @@ export default defineConfig(eslint.configs.recommended, tseslint.configs.recomme
     '@typescript-eslint/restrict-template-expressions': 'off'
   }
 }, {
-  files: ['eslint.config.mjs'],
+  files: ['eslint.config.mjs', 'tests/**/*.ts'],
   extends: [tseslint.configs.disableTypeChecked]
 }, {
   ignores: ['build', 'tsdown.config.ts']

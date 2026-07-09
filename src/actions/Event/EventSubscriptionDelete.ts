@@ -1,17 +1,17 @@
 import { createAction } from '@silkweave/core'
 import z from 'zod'
-import { TENANT_USER_ID, TokenClient } from '../../classes/TokenClient.js'
+import { gatewayRequest } from '../../lib/watcherClient.js'
+import { SubscriptionRemoveResult } from '../../types/gateway.js'
 
 export const EventSubscriptionDelete = createAction({
   name: 'eventSubscriptionDelete',
-  description: 'Delete a persistent message subscription by ID.',
+  description: 'Delete a persistent message subscription by ID, applied live on the RUNNING watcher over its control gateway (fails if no `lark-serve` watcher process is running).',
   args: ['id'],
   input: z.object({
     id: z.string().describe('Subscription ID (from EventSubscriptionList)')
   }),
   run: async ({ id }) => {
-    const client = new TokenClient(TENANT_USER_ID)
-    if (!client.removeSubscription(id)) { throw new Error(`No subscription found with id ${id}`) }
-    return { deleted: id }
+    const { removed } = await gatewayRequest<SubscriptionRemoveResult>('subscriptions.remove', { id })
+    return { deleted: removed }
   }
 })

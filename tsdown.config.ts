@@ -26,4 +26,8 @@ export default defineConfig([{
   ...shared,
   entry: ['src/serve.ts'],
   banner: { js: '#!/usr/bin/env node' }
+}, {
+  ...shared,
+  entry: ['src/listen.ts'],
+  banner: { js: '#!/usr/bin/env node' }
 }])

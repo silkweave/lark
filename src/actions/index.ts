@@ -22,6 +22,8 @@ import { EventReflexConfigure } from './Event/EventReflexConfigure.js'
 import { EventSubscriptionCreate } from './Event/EventSubscriptionCreate.js'
 import { EventSubscriptionDelete } from './Event/EventSubscriptionDelete.js'
 import { EventSubscriptionList } from './Event/EventSubscriptionList.js'
+import { EventSubscriptionUpdate } from './Event/EventSubscriptionUpdate.js'
+import { EventWatchReconnect } from './Event/EventWatchReconnect.js'
 import { EventWatchStatus } from './Event/EventWatchStatus.js'
 import { ImChatList } from './Im/ImChatList.js'
 import { ImChatSearch } from './Im/ImChatSearch.js'
@@ -63,6 +65,8 @@ export const actions = [
   EventSubscriptionCreate,
   EventSubscriptionDelete,
   EventSubscriptionList,
+  EventSubscriptionUpdate,
+  EventWatchReconnect,
   EventWatchStatus,
   ImChatList,
   ImChatSearch,

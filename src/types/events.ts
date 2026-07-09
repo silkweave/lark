@@ -89,6 +89,10 @@ export interface WatcherStatus {
   /** When running is false, a human/agent-readable explanation including how to start the watcher */
   notRunningReason?: string
   recent: { receivedAt: string; chatId: string; text: string }[]
+  /** Whether the Lark WebSocket long-connection is up (best-effort; present only while running) */
+  wsConnected?: boolean
+  /** Number of live gateway event streams (present only while running) */
+  activeStreams?: number
   /** Reflex dispatcher status (present when a reflex config exists) */
   reflex?: {
     enabled: boolean

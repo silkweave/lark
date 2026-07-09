@@ -8,6 +8,10 @@ import { WatcherStatus } from '../types/events.js'
 export const PID_PATH = join(homedir(), '.silkweave-lark.watcher.pid')
 /** Heartbeat/status file the running watcher rewrites so any other process can report accurate counters without owning the watcher. */
 export const STATUS_PATH = join(homedir(), '.silkweave-lark.watcher.status.json')
+/** Unix domain socket the running watcher's control gateway listens on (0600; connectability = liveness). */
+export const SOCK_PATH = join(homedir(), '.silkweave-lark.watcher.sock')
+/** Append-only log of matched message events, written by the watcher and read by EventList + stream replay. */
+export const EVENTS_PATH = join(homedir(), '.silkweave-lark.events.jsonl')
 
 /** How often the running watcher rewrites its heartbeat/status file. */
 export const HEARTBEAT_MS = 10000
@@ -21,7 +25,9 @@ const STALE_AFTER_MS = 35000
 export const START_HINT =
   'No watcher process is running. The watcher is a standalone OS process (not an MCP tool, not started by the MCP server) — ' +
   'start it from a shell: `lark-serve` (installed bin) or `pnpm serve` in a dev checkout. ' +
-  'Add `--reflex --api-key <key> --playbook <file>` to enable the fast-responder. ' +
+  'It starts bare (no arguments needed) and is then configured live over its control gateway ' +
+  '(EventSubscriptionCreate/Update/Delete, EventReflexConfigure, EventWatchReconnect). ' +
+  '`--reflex --api-key <key> --playbook <file>` remain optional pre-seeds. ' +
   'Background it for a session (e.g. `lark-serve &`) or supervise with launchd/systemd for always-on. ' +
   'Stop it with Ctrl-C or `kill $(cat ~/.silkweave-lark.watcher.pid)`.'
 
@@ -36,6 +42,8 @@ export interface WatcherStatusFile {
   reflexCounters: { trivial: number; task: number; ignored: number; failed: number }
   lastError?: string
   recent: { receivedAt: string; chatId: string; text: string }[]
+  wsConnected?: boolean
+  activeStreams?: number
 }
 
 export function isProcessAlive(pid: number): boolean {
@@ -107,6 +115,8 @@ export function readWatcherStatus(): WatcherStatus {
     lastError: file?.lastError,
     notRunningReason,
     recent: file?.recent ?? [],
+    wsConnected: running ? file?.wsConnected : undefined,
+    activeStreams: running ? file?.activeStreams : undefined,
     reflex: reflexConfig ? {
       enabled: reflexConfig.enabled ?? false,
       model: reflexConfig.model ?? 'claude-haiku-4-5',

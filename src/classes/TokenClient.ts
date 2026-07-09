@@ -1,9 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { AppType, Client, Domain, LoggerLevel, withTenantToken, withUserAccessToken } from '@larksuiteoapi/node-sdk'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
 import { dirname, join } from 'path'
 import { buildLarkUrl, fetchLark, parseLarkResponse } from '../lib/api.js'
+import { withFileLock } from '../lib/fileLock.js'
 import { scopes } from '../lib/scopes.js'
 import { LarkResponse } from '../types/api.js'
 import { MessageSubscription, WatcherConfig } from '../types/events.js'
@@ -44,16 +45,39 @@ export class TokenClient {
   constructor(key = 'default', storePath = join(homedir(), '.silkweave-lark.json')) {
     this.key = key
     this.storePath = storePath
-    this.registry = existsSync(this.storePath)
+    this.registry = this.readRegistry()
+  }
+
+  private readRegistry(): TokenRegistry {
+    return existsSync(this.storePath)
       ? JSON.parse(readFileSync(this.storePath, 'utf-8'))
       : { clientId: '', clientSecret: '', redirectUri: '', entries: {} }
   }
 
+  /**
+   * Every write goes through here: re-read the store under an advisory file lock, apply the mutation to the
+   * fresh state, then atomic-write (temp + rename). The store is multi-writer (MCP OAuth, watcher token
+   * refresh, gateway persistence) — mutating a constructor-time snapshot would lose concurrent updates.
+   */
+  private mutate(fn: (registry: TokenRegistry) => void): void {
+    withFileLock(this.storePath, () => {
+      const registry = this.readRegistry()
+      fn(registry)
+      const dirName = dirname(this.storePath)
+      if (!existsSync(dirName)) { mkdirSync(dirName, { recursive: true }) }
+      const tmpPath = `${this.storePath}.${process.pid}.tmp`
+      writeFileSync(tmpPath, JSON.stringify(registry, null, 2))
+      renameSync(tmpPath, this.storePath)
+      this.registry = registry
+    })
+  }
+
   public setAppCredentials(clientId: string, clientSecret: string, redirectUri: string) {
-    this.registry.clientId = clientId
-    this.registry.clientSecret = clientSecret
-    this.registry.redirectUri = redirectUri
-    this.flush()
+    this.mutate((registry) => {
+      registry.clientId = clientId
+      registry.clientSecret = clientSecret
+      registry.redirectUri = redirectUri
+    })
   }
 
   public getAuthorizeUrl(state: string) {
@@ -137,9 +161,10 @@ export class TokenClient {
       app_id: this.registry.clientId,
       app_secret: this.registry.clientSecret
     })
-    this.registry.tenantToken = response.tenant_access_token
-    this.registry.tenantTokenExpiresAt = now + response.expire * 1000
-    this.flush()
+    this.mutate((registry) => {
+      registry.tenantToken = response.tenant_access_token
+      registry.tenantTokenExpiresAt = now + response.expire * 1000
+    })
   }
 
   public getWatcherConfig(): WatcherConfig {
@@ -147,38 +172,56 @@ export class TokenClient {
   }
 
   public setWatcherConfig(patch: Partial<WatcherConfig>): WatcherConfig {
-    this.registry.watcher = { ...this.getWatcherConfig(), ...patch }
-    this.flush()
-    return this.registry.watcher
+    this.mutate((registry) => {
+      registry.watcher = { ...(registry.watcher ?? { subscriptions: [] }), ...patch }
+    })
+    return this.getWatcherConfig()
   }
 
   public addSubscription(subscription: MessageSubscription): void {
-    const config = this.getWatcherConfig()
-    this.setWatcherConfig({ subscriptions: [...config.subscriptions, subscription] })
+    this.mutate((registry) => {
+      const watcher = registry.watcher ?? { subscriptions: [] }
+      watcher.subscriptions = [...watcher.subscriptions, subscription]
+      registry.watcher = watcher
+    })
+  }
+
+  /** Apply a transform to the subscription with the given id; returns the updated subscription, or undefined if not found. */
+  public updateSubscription(id: string, apply: (subscription: MessageSubscription) => MessageSubscription): MessageSubscription | undefined {
+    let updated: MessageSubscription | undefined
+    this.mutate((registry) => {
+      const watcher = registry.watcher ?? { subscriptions: [] }
+      watcher.subscriptions = watcher.subscriptions.map((s) => {
+        if (s.id !== id) { return s }
+        updated = apply(s)
+        return updated
+      })
+      registry.watcher = watcher
+    })
+    return updated
   }
 
   public removeSubscription(id: string): boolean {
-    const config = this.getWatcherConfig()
-    const subscriptions = config.subscriptions.filter((s) => s.id !== id)
-    if (subscriptions.length === config.subscriptions.length) { return false }
-    this.setWatcherConfig({ subscriptions })
-    return true
+    let removed = false
+    this.mutate((registry) => {
+      const watcher = registry.watcher ?? { subscriptions: [] }
+      const subscriptions = watcher.subscriptions.filter((s) => s.id !== id)
+      removed = subscriptions.length !== watcher.subscriptions.length
+      watcher.subscriptions = subscriptions
+      registry.watcher = watcher
+    })
+    return removed
   }
 
   public setEntry(token: TokenEntry): void {
-    this.registry.entries[this.key] = token
-    this.flush()
+    this.mutate((registry) => {
+      registry.entries[this.key] = token
+    })
   }
 
   public getEntry() {
     const entry = this.registry.entries[this.key]
     if (!entry) { throw new Error(`No tokens stored for ${this.key}`) }
     return entry
-  }
-
-  private flush() {
-    const dirName = dirname(this.storePath)
-    if (!existsSync(dirName)) { mkdirSync(dirName, { recursive: true }) }
-    writeFileSync(this.storePath, JSON.stringify(this.registry, null, 2))
   }
 }

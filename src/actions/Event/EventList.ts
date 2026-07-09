@@ -1,7 +1,7 @@
 import { createAction } from '@silkweave/core'
 import { existsSync, readFileSync } from 'fs'
 import z from 'zod'
-import { EVENTS_PATH } from '../../lib/messageWatcher.js'
+import { EVENTS_PATH } from '../../lib/watcherStatus.js'
 import { MessageEventRecord } from '../../types/events.js'
 
 export const EventList = createAction({

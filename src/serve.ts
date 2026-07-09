@@ -58,10 +58,10 @@ async function main() {
 
   const config = tokenClient.getWatcherConfig()
   if (!config.subscriptions.length) {
-    console.error('[silkweave-lark] No subscriptions configured — create one via EventSubscriptionCreate first (events would not be recorded)')
+    console.error('[silkweave-lark] No subscriptions configured yet — add one live via EventSubscriptionCreate (MCP) or the control gateway once the watcher is up (until then, events are not recorded)')
   }
   const status = await messageWatcher.start()
-  console.log(`[silkweave-lark] Message watcher running (pid ${process.pid}, bot: ${status.botName ?? 'unknown'}, ${status.subscriptions} subscriptions)`)
+  console.log(`[silkweave-lark] Message watcher running (pid ${process.pid}, bot: ${status.botName ?? 'unknown'}, ${status.subscriptions} subscriptions, gateway: ~/.silkweave-lark.watcher.sock)`)
   if (status.reflex) {
     console.log(`[silkweave-lark] Reflex ${status.reflex.enabled ? 'enabled' : 'disabled'} (model: ${status.reflex.model}, apiKey: ${status.reflex.hasApiKey ? 'set' : 'missing'}, playbook: ${status.reflex.hasPlaybook ? 'set' : 'none'})`)
   }

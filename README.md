@@ -142,9 +142,9 @@ In the [Lark developer console](https://open.larksuite.com/):
 EventSubscriptionCreate { "chatId": "oc_xxx", "mentionBot": true }
 ```
 
-Filters are optional and combine with AND: `chatId` (specific chat), `mentionBot` (only @-mentions of the bot), `keywords` (case-insensitive match). Omit all filters to record every message the bot receives. `onEventCommand` spawns a detached shell command per matching message with `LARK_*` env vars (`LARK_EVENT_JSON`, `LARK_CHAT_ID`, `LARK_TEXT`, `LARK_MESSAGE_ID`, `LARK_SENDER_OPEN_ID`, `LARK_MENTIONED_BOT`, `LARK_SUBSCRIPTION_ID`) — use it to notify or kick off an agent.
+Filters are optional and combine with AND: `chatId` (specific chat), `mentionBot` (only @-mentions of the bot), `keywords` (case-insensitive match). Omit all filters to record every message the bot receives. `onEventCommand` spawns a detached shell command per matching message with `LARK_*` env vars (`LARK_EVENT_JSON`, `LARK_HISTORY_JSON`, `LARK_CHAT_ID`, `LARK_TEXT`, `LARK_MESSAGE_ID`, `LARK_SENDER_OPEN_ID`, `LARK_MENTIONED_BOT`, `LARK_SUBSCRIPTION_ID`) — use it to notify or kick off an agent. `webhookUrl` instead POSTs `{ subscriptionId, event, history }` to a persistent listener (optionally signed via `webhookSecret`).
 
-Subscriptions are persisted in `~/.silkweave-lark.json` and evaluated live — you can add or remove them while the watcher is running, from any process.
+Subscription CRUD (`EventSubscriptionCreate` / `EventSubscriptionUpdate` / `EventSubscriptionDelete`) and reflex config (`EventReflexConfigure`) are applied **live on the running watcher** over its control gateway and persisted to `~/.silkweave-lark.json` — no restart, id-stable updates, safe under concurrent MCP agents. These mutations require the watcher to be running; `EventSubscriptionList` and `EventWatchStatus` fall back to file reads when it isn't.
 
 ### Running the watcher
 
@@ -166,7 +166,45 @@ Run `lark-serve --help` for all reflex flags. Ways to run it:
 
 **For AI agents:** you cannot start the watcher through an MCP tool — spawn it as a normal background process (e.g. a background shell running `lark-serve`), then poll `EventWatchStatus`. When the watcher is down, `EventWatchStatus` returns `running: false` with a `notRunningReason` that contains the exact command to run.
 
-Only one watcher may run at a time, guarded by the pidfile `~/.silkweave-lark.watcher.pid`. Stop it with `Ctrl-C` or `kill $(cat ~/.silkweave-lark.watcher.pid)`. Status is read from a heartbeat file (`~/.silkweave-lark.watcher.status.json`) that the running watcher rewrites every few seconds, so `EventWatchStatus` reports the same live counters no matter which process asks.
+Only one watcher may run at a time, guarded by the pidfile `~/.silkweave-lark.watcher.pid` and by the control socket. Stop it with `Ctrl-C` or `kill $(cat ~/.silkweave-lark.watcher.pid)`.
+
+An example `launchd` agent for always-on operation (`~/Library/LaunchAgents/com.silkweave.lark-serve.plist`):
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.silkweave.lark-serve</string>
+  <key>ProgramArguments</key>
+  <array><string>/opt/homebrew/bin/lark-serve</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardErrorPath</key><string>/tmp/lark-serve.log</string>
+</dict>
+</plist>
+```
+
+Load with `launchctl load ~/Library/LaunchAgents/com.silkweave.lark-serve.plist`. No arguments are needed — the watcher resumes its persisted config and everything else is reconfigured live over the gateway.
+
+### The control gateway
+
+While running, the watcher hosts a **control gateway** on a Unix domain socket at `~/.silkweave-lark.watcher.sock` (mode 0600, same-user only — never exposed over TCP). The protocol is newline-delimited JSON: request/response methods (`ping`, `status`, `subscriptions.list/add/update/remove`, `reflex.get/set`, `reconnect`) plus a `subscribe` method that turns the connection into a live event stream. MCP `Event*` tools are thin clients of this socket; the watcher is the single authority for its own config while running, so concurrent agents can't lose each other's updates. Live status (`status`) includes `wsConnected` and `activeStreams` on top of the heartbeat counters.
+
+The heartbeat file (`~/.silkweave-lark.watcher.status.json`) is still written every few seconds for external monitors and as the read-only fallback when the watcher is down.
+
+### Streaming events (`lark-listen`)
+
+A persistent consumer can subscribe to events as they arrive — no public URL, no per-message process:
+
+```sh
+lark-listen                      # subscription-matched events, NDJSON on stdout
+lark-listen --all                # every inbound message the bot sees (full transcript)
+lark-listen --chat oc_xxx --history 20
+lark-listen --since 2026-07-10T00:00:00Z   # replay matched events first, then go live
+```
+
+Each line is `{ event, history?, reflex? }` — `reflex` carries the fast-responder's outcome (`category`, `replied`, `replyText`, `dispatched`) so a downstream agent knows what was already said. The client auto-reconnects with exponential backoff and re-subscribes from the last-seen event (`sinceTs` replay from `events.jsonl`), making matched-event delivery gap-free across watcher restarts. Slow consumers are disconnected with an `overflow` frame and catch up the same way. Programmatic use: `streamEvents(filter, onEvent)` from the library (`import { streamEvents } from '@silkweave/lark'`).
 
 ### Reading events
 
@@ -652,7 +690,7 @@ See [Message Event Subscriptions](#message-event-subscriptions) for setup. These
 
 #### `EventSubscriptionCreate`
 
-Create a persistent message subscription.
+Create a persistent message subscription, applied live on the running watcher (fails when the watcher is down).
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -661,28 +699,46 @@ Create a persistent message subscription.
 | `mentionBot` | boolean | No | Only messages that @-mention the bot |
 | `keywords` | string[] | No | Only messages containing one of these keywords |
 | `onEventCommand` | string | No | Shell command spawned per matching message (`LARK_*` env vars) |
+| `webhookUrl` | string | No | URL POSTed with `{ subscriptionId, event, history }` per matching message |
+| `webhookSecret` | string | No | Sent as `X-Silkweave-Signature` on webhook requests |
 
-**Returns:** `{ subscription, watcher }`
+**Returns:** `{ subscription }`
+
+---
+
+#### `EventSubscriptionUpdate`
+
+Update a subscription in place (id-stable), applied live on the running watcher. Takes `id` plus any of the fields above — pass a value to set, `null` to clear, omit to leave unchanged (e.g. `{ "id": "sub_x", "webhookUrl": null }` removes just the webhook).
+
+**Returns:** `{ subscription }`
 
 ---
 
 #### `EventSubscriptionList`
 
-List subscriptions and current watcher status.
+List subscriptions and current watcher status (live from the gateway; falls back to the config file when the watcher is down).
 
 ---
 
 #### `EventSubscriptionDelete`
 
-Delete a subscription by `id`.
+Delete a subscription by `id`, applied live on the running watcher.
 
 ---
 
 #### `EventWatchStatus`
 
-Read-only watcher status: running state, bot identity, counters, reflex config + counters, and recent events — read from the watcher's heartbeat + pidfile. Never starts or stops anything (the watcher is a standalone `lark-serve` process — see [Running the watcher](#running-the-watcher)). When `running` is `false`, `notRunningReason` includes the exact command to start it.
+Read-only watcher status: running state, bot identity, `wsConnected`, `activeStreams`, counters, reflex config + counters, and recent events — queried live over the control gateway, falling back to the heartbeat + pidfile when no watcher is running. Never starts or stops anything (the watcher is a standalone `lark-serve` process — see [Running the watcher](#running-the-watcher)). When `running` is `false`, `notRunningReason` includes the exact command to start it.
 
 > **Note:** there are no `EventWatchStart`/`EventWatchStop` tools — starting and stopping the watcher is done from a shell (`lark-serve` / `kill`), not through MCP, so process lifecycle stays visible and controllable.
+
+---
+
+#### `EventWatchReconnect`
+
+Tell the running watcher to tear down and re-establish its Lark WebSocket connection (re-reads app credentials and bot info). The gateway and live event streams stay up throughout. Use after changing app credentials or to recover a wedged connection.
+
+**Returns:** `{ reconnected, wsConnected }`
 
 ---
 
@@ -723,15 +779,16 @@ Restart the MCP server to pick up code changes.
 ```
 src/
   index.ts          # Library exports
-  mcp.ts            # MCP server (stdio transport, auto-starts message watcher)
+  mcp.ts            # MCP server (stdio transport; tools only — never runs the watcher)
   cli.ts            # CLI (interactive transport)
   serve.ts          # Standalone message watcher service (lark-serve)
+  listen.ts         # Event streaming CLI (lark-listen)
   actions/          # Tool definitions (createAction + zod schemas)
     Authen/         # OAuth flow
     Bitable/        # Base apps, tables, fields, records
     Contact/        # Organization users
     Docx/           # Document export/import
-    Event/          # Message subscriptions + watcher lifecycle
+    Event/          # Message subscriptions, reflex config, watcher status/reconnect
     Im/             # Chat and messaging
     Mcp/            # Server management
     Wiki/           # Wiki spaces and nodes
@@ -739,8 +796,9 @@ src/
     TokenClient.ts  # User and tenant agnostic token persistence client (~/.silkweave-lark.json)
     DocxParser.ts   # Lark blocks -> Markdown converter
   parser/           # Block type parsers (text, heading, list, table, etc.)
-  types/            # TypeScript type definitions
-  lib/              # Shared utilities (API helpers, scopes, message watcher)
+  types/            # TypeScript type definitions (incl. gateway protocol in types/gateway.ts)
+  lib/              # Shared utilities (API helpers, scopes, message watcher,
+                    #   watcherGateway/watcherClient — UDS control channel, fileLock)
 ```
 
 ## Development
@@ -760,6 +818,9 @@ pnpm build
 
 # Lint
 pnpm lint
+
+# Unit tests (gateway framing, patch semantics, file lock)
+pnpm test
 
 # Clean build artifacts
 pnpm clean
