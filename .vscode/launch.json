@@ -79,5 +79,12 @@
     "program": "${workspaceFolder}/node_modules/tsx/dist/cli.cjs",
     "outputCapture": "std",
     "args": ["${workspaceRoot}/src/cli.ts", "docx-document-import", "--document-id=KejddvzgUowq0KxwK3llXPfwgsg", "--path=README.md"]
+  }, {
+    "name": "lark-serve",
+    "type": "node",
+    "request": "launch",
+    "program": "${workspaceFolder}/node_modules/tsx/dist/cli.cjs",
+    "outputCapture": "std",
+    "args": ["${workspaceRoot}/src/serve.ts", "--reflex", "--playbook", "./docs/PLAYBOOK.md"]
   }]
 }

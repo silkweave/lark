@@ -18,6 +18,7 @@ import { DocxDocumentBlockList } from './Docx/DocxDocumentBlockList.js'
 import { DocxDocumentExport } from './Docx/DocxDocumentExport.js'
 import { DocxDocumentImport } from './Docx/DocxDocumentImport.js'
 import { EventList } from './Event/EventList.js'
+import { EventReflexConfigure } from './Event/EventReflexConfigure.js'
 import { EventSubscriptionCreate } from './Event/EventSubscriptionCreate.js'
 import { EventSubscriptionDelete } from './Event/EventSubscriptionDelete.js'
 import { EventSubscriptionList } from './Event/EventSubscriptionList.js'
@@ -60,6 +61,7 @@ export const actions = [
   DocxDocumentExport,
   DocxDocumentImport,
   EventList,
+  EventReflexConfigure,
   EventSubscriptionCreate,
   EventSubscriptionDelete,
   EventSubscriptionList,

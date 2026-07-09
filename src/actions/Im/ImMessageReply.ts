@@ -2,6 +2,7 @@ import { createAction } from '@silkweave/core'
 import z from 'zod'
 import { TokenClient } from '../../classes/TokenClient.js'
 import { userIdSchema } from '../../lib/auth.js'
+import { appendHistory } from '../../lib/history.js'
 
 export const ImMessageReply = createAction({
   name: 'imMessageReply',
@@ -17,9 +18,19 @@ export const ImMessageReply = createAction({
   }),
   run: async ({ messageId, msgType, content, replyInThread, uuid, userId }) => {
     const client = new TokenClient(userId)
-    return client.withAuth((lark, options) => lark.im.message.reply({
+    const result = await client.withAuth((lark, options) => lark.im.message.reply({
       path: { message_id: messageId },
       data: { msg_type: msgType, content, reply_in_thread: replyInThread, uuid }
     }, options))
+    const chatId = (result as { chat_id?: string }).chat_id
+    const replyId = (result as { message_id?: string }).message_id
+    if (chatId && replyId) {
+      let text = content
+      if (msgType === 'text') {
+        try { text = JSON.parse(content).text ?? content } catch { /* keep raw content */ }
+      }
+      appendHistory({ chatId, messageId: replyId, parentId: messageId, role: 'agent', text, createTime: String(Date.now()) })
+    }
+    return result
   }
 })
