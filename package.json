@@ -1,6 +1,6 @@
 {
   "name": "@silkweave/lark",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "description": "Silkweave Lark MCP & CLI",
   "author": "Tobias Strebitzer <tobias.strebitzer@atomic.bi.com>",
   "license": "MIT",
