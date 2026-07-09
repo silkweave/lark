@@ -34,8 +34,6 @@ export interface ReflexConfig {
 }
 
 export interface WatcherConfig {
-  /** Auto-start the watcher when the MCP server boots */
-  autoStart?: boolean
   subscriptions: MessageSubscription[]
   reflex?: ReflexConfig
 }
@@ -88,9 +86,8 @@ export interface WatcherStatus {
   subscriptions: number
   counters: { received: number; matched: number; dispatched: number; errors: number }
   lastError?: string
+  /** When running is false, a human/agent-readable explanation including how to start the watcher */
   notRunningReason?: string
-  /** Set when a watcher is running in a different process (e.g. the standalone service) */
-  externalPid?: number
   recent: { receivedAt: string; chatId: string; text: string }[]
   /** Reflex dispatcher status (present when a reflex config exists) */
   reflex?: {

@@ -1,12 +1,12 @@
 import { createAction } from '@silkweave/core'
 import z from 'zod'
 import { TENANT_USER_ID, TokenClient } from '../../classes/TokenClient.js'
-import { messageWatcher } from '../../lib/messageWatcher.js'
+import { readWatcherStatus } from '../../lib/watcherStatus.js'
 import { MessageSubscription } from '../../types/events.js'
 
 export const EventSubscriptionCreate = createAction({
   name: 'eventSubscriptionCreate',
-  description: 'Create a persistent message subscription. Matching messages received by the bot are appended to the local event log (readable via EventList) and can optionally trigger a shell command and/or a webhook. The subscription only receives events while the watcher is running (EventWatchStart or the standalone `lark-serve` service) and the Lark app has the im.message.receive_v1 event enabled with long-connection mode.',
+  description: 'Create a persistent message subscription. Matching messages received by the bot are appended to the local event log (readable via EventList) and can optionally trigger a shell command and/or a webhook. The subscription only receives events while the standalone `lark-serve` watcher process is running (start it from a shell — it is not an MCP tool; check EventWatchStatus) and the Lark app has the im.message.receive_v1 event enabled with long-connection mode.',
   input: z.object({
     chatId: z.string().optional().describe('Restrict to a specific chat (chat_id from ImChatList); omit to match all chats the bot is in'),
     chatName: z.string().optional().describe('Human-readable chat name (informational only)'),
@@ -30,6 +30,6 @@ export const EventSubscriptionCreate = createAction({
       createdAt: new Date().toISOString()
     }
     client.addSubscription(subscription)
-    return { subscription, watcher: messageWatcher.getStatus() }
+    return { subscription, watcher: readWatcherStatus() }
   }
 })

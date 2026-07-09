@@ -1,10 +1,10 @@
 import { createAction } from '@silkweave/core'
 import z from 'zod'
-import { messageWatcher } from '../../lib/messageWatcher.js'
+import { readWatcherStatus } from '../../lib/watcherStatus.js'
 
 export const EventWatchStatus = createAction({
   name: 'eventWatchStatus',
-  description: 'Get message watcher status: running state, counters, recent matched events. If externalPid is set, a watcher is running in another process (e.g. the standalone lark-serve service).',
+  description: 'Report message-watcher status by reading its heartbeat + pidfile — read-only, never starts or stops anything. The watcher is a SEPARATE OS process (`lark-serve`); this MCP server never runs it. Returns running, pid, startedAt, counters (received/matched/dispatched/errors), reflex config + counters, and recent events. When running is false, notRunningReason explains why and gives the exact shell command to start it.',
   input: z.object({}),
-  run: async () => messageWatcher.getStatus()
+  run: async () => readWatcherStatus()
 })

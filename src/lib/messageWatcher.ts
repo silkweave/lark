@@ -8,9 +8,9 @@ import { MessageEventRecord, MessageSubscription, WatcherStatus } from '../types
 import { fetchLark } from './api.js'
 import { appendHistory, readHistory } from './history.js'
 import { runReflex } from './reflex.js'
+import { clearWatcherStatus, HEARTBEAT_MS, isProcessAlive, PID_PATH, writeWatcherStatus } from './watcherStatus.js'
 
 export const EVENTS_PATH = join(homedir(), '.silkweave-lark.events.jsonl')
-const PID_PATH = join(homedir(), '.silkweave-lark.watcher.pid')
 const DISPATCH_HISTORY_LIMIT = 20
 
 /** All SDK log output goes to stderr — stdout is reserved for the MCP stdio protocol */
@@ -35,15 +35,6 @@ interface MessageEvent {
     message_type: string
     content: string
     mentions?: { key: string; id: { open_id?: string }; name: string }[]
-  }
-}
-
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch {
-    return false
   }
 }
 
@@ -80,6 +71,7 @@ export class MessageWatcher {
   private recent: WatcherStatus['recent'] = []
   private lastError?: string
   private notRunningReason?: string
+  private heartbeat?: ReturnType<typeof setInterval>
 
   public async start(): Promise<WatcherStatus> {
     if (this.running) { throw new Error('Message watcher is already running in this process') }
@@ -114,7 +106,27 @@ export class MessageWatcher {
     this.running = true
     this.startedAt = Date.now()
     this.notRunningReason = undefined
+    // Persist a heartbeat so any other process (MCP server, CLI) can report accurate status without owning the watcher.
+    this.persistStatus()
+    this.heartbeat = setInterval(() => this.persistStatus(), HEARTBEAT_MS)
+    this.heartbeat.unref?.()
     return this.getStatus()
+  }
+
+  /** Write the current in-memory status to the shared heartbeat file (see readWatcherStatus). */
+  private persistStatus() {
+    if (!this.running) { return }
+    writeWatcherStatus({
+      pid: process.pid,
+      startedAt: this.startedAt ? new Date(this.startedAt).toISOString() : new Date().toISOString(),
+      heartbeatAt: new Date().toISOString(),
+      botName: this.botName,
+      botOpenId: this.botOpenId,
+      counters: { ...this.counters },
+      reflexCounters: { ...this.reflexCounters },
+      lastError: this.lastError,
+      recent: [...this.recent]
+    })
   }
 
   public stop(): WatcherStatus {
@@ -122,12 +134,10 @@ export class MessageWatcher {
     this.ws = undefined
     this.running = false
     this.notRunningReason = 'stopped'
+    if (this.heartbeat) { clearInterval(this.heartbeat); this.heartbeat = undefined }
+    clearWatcherStatus()
     if (existsSync(PID_PATH) && readFileSync(PID_PATH, 'utf-8').trim() === String(process.pid)) { rmSync(PID_PATH) }
     return this.getStatus()
-  }
-
-  public setNotRunningReason(reason: string) {
-    this.notRunningReason = reason
   }
 
   public getStatus(): WatcherStatus {
@@ -143,7 +153,6 @@ export class MessageWatcher {
       counters: { ...this.counters },
       lastError: this.lastError,
       notRunningReason: this.running ? undefined : this.notRunningReason,
-      externalPid: this.running ? undefined : readExternalPid(),
       recent: [...this.recent],
       reflex: reflex ? {
         enabled: reflex.enabled ?? false,
@@ -236,6 +245,8 @@ export class MessageWatcher {
       this.counters.errors++
       this.lastError = (error as Error).message
       stderrLogger.error('Failed to handle message event:', this.lastError)
+    } finally {
+      this.persistStatus()
     }
   }
 
@@ -264,6 +275,9 @@ export class MessageWatcher {
       this.counters.errors++
       this.lastError = (error as Error).message
       stderrLogger.error('Failed to dispatch webhook:', this.lastError)
+    } finally {
+      // Webhook completes asynchronously (after handleMessage returns) — persist so the counter change is visible promptly.
+      this.persistStatus()
     }
   }
 

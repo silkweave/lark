@@ -1,12 +1,12 @@
 import { createAction } from '@silkweave/core'
 import z from 'zod'
 import { TENANT_USER_ID, TokenClient } from '../../classes/TokenClient.js'
-import { messageWatcher } from '../../lib/messageWatcher.js'
+import { readWatcherStatus } from '../../lib/watcherStatus.js'
 import { ReflexConfig } from '../../types/events.js'
 
 export const EventReflexConfigure = createAction({
   name: 'eventReflexConfigure',
-  description: 'Configure the Haiku "reflex" fast-response dispatcher. When enabled, a direct @-mention of the bot (or a reply in a mention-started thread) is instantly acknowledged with an emoji reaction, then classified by a fast Anthropic model: trivial questions are answered inline, real tasks get a quick "working on it" reply plus the subscription\'s onEventCommand (the heavy workload), and mistaken/passing mentions are ignored. Requires an Anthropic API key, persisted to ~/.silkweave-lark.json via the apiKey field — pass it here, or set it before enabling. Only the fields you pass are changed. Restart the watcher (or it re-reads config live) for changes to apply.',
+  description: 'Configure the Haiku "reflex" fast-response dispatcher. When enabled, a direct @-mention of the bot (or a reply in a mention-started thread) is instantly acknowledged with an emoji reaction, then classified by a fast Anthropic model: trivial questions are answered inline, real tasks get a quick "working on it" reply plus the subscription\'s onEventCommand (the heavy workload), and mistaken/passing mentions are ignored. Requires an Anthropic API key, persisted to ~/.silkweave-lark.json via the apiKey field — pass it here, or set it before enabling. Only the fields you pass are changed. The running `lark-serve` watcher re-reads this config live per event, so changes apply without a restart.',
   input: z.object({
     enabled: z.boolean().optional().describe('Turn the reflex on or off'),
     apiKey: z.string().optional().describe('Anthropic API key, persisted to ~/.silkweave-lark.json. Required whenever reflex is enabled. Pass an empty string to clear.'),
@@ -36,7 +36,7 @@ export const EventReflexConfigure = createAction({
         playbookChars: reflex.playbook?.trim().length ?? 0
       },
       hasApiKey: !!reflex.apiKey,
-      watcher: messageWatcher.getStatus()
+      watcher: readWatcherStatus()
     }
   }
 })

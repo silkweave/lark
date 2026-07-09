@@ -148,12 +148,25 @@ Subscriptions are persisted in `~/.silkweave-lark.json` and evaluated live — y
 
 ### Running the watcher
 
-Two ways to keep the connection alive:
+The watcher is a **standalone OS process** — deliberately *not* an MCP tool and *never* started by the MCP server. That keeps the bot's lifecycle independent of any editor/agent session and off the MCP stdio process. You start it from a shell:
 
-- **Inside the MCP server** — call `EventWatchStart`. The watcher lives as long as the MCP server process and resumes automatically on server boot (`autoStart`). Good for interactive sessions.
-- **As a standalone service** — run `npx @silkweave/lark lark-serve` (or `pnpm serve` in dev). This keeps subscriptions alive independently of any agent or MCP client. Run it under `launchd`, `systemd`, or `pm2` for a persistent daemon.
+```sh
+# Installed:
+lark-serve
+# Dev checkout:
+pnpm serve
+# With the reflex fast-responder:
+lark-serve --reflex --api-key sk-ant-... --playbook ./playbook.md
+```
 
-Only one watcher may run at a time (guarded by a pidfile, `~/.silkweave-lark.watcher.pid`); `EventWatchStatus` reports an `externalPid` when the watcher is running in another process.
+Run `lark-serve --help` for all reflex flags. Ways to run it:
+
+- **Background shell (session/dev):** `lark-serve &` — quick, visible, killable, but dies with the shell.
+- **Persistent daemon:** supervise with `launchd` (macOS), `systemd`, or `pm2` so it restarts on crash/boot. This is what you want for an always-on bot.
+
+**For AI agents:** you cannot start the watcher through an MCP tool — spawn it as a normal background process (e.g. a background shell running `lark-serve`), then poll `EventWatchStatus`. When the watcher is down, `EventWatchStatus` returns `running: false` with a `notRunningReason` that contains the exact command to run.
+
+Only one watcher may run at a time, guarded by the pidfile `~/.silkweave-lark.watcher.pid`. Stop it with `Ctrl-C` or `kill $(cat ~/.silkweave-lark.watcher.pid)`. Status is read from a heartbeat file (`~/.silkweave-lark.watcher.status.json`) that the running watcher rewrites every few seconds, so `EventWatchStatus` reports the same live counters no matter which process asks.
 
 ### Reading events
 
@@ -655,7 +668,7 @@ Create a persistent message subscription.
 
 #### `EventSubscriptionList`
 
-List subscriptions, `autoStart` setting, and watcher status.
+List subscriptions and current watcher status.
 
 ---
 
@@ -665,31 +678,11 @@ Delete a subscription by `id`.
 
 ---
 
-#### `EventWatchStart`
-
-Start the watcher (WebSocket long connection) in the current process. Sets `autoStart` so it resumes on MCP server boot.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `autoStart` | boolean | No | Auto-start watcher on MCP server boot (default: `true`) |
-
-**Returns:** Watcher status
-
----
-
-#### `EventWatchStop`
-
-Stop the watcher in the current process.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `disableAutoStart` | boolean | No | Also disable auto-start (default: `true`) |
-
----
-
 #### `EventWatchStatus`
 
-Watcher status: running state, bot identity, counters, recent events, `externalPid` if running in another process.
+Read-only watcher status: running state, bot identity, counters, reflex config + counters, and recent events — read from the watcher's heartbeat + pidfile. Never starts or stops anything (the watcher is a standalone `lark-serve` process — see [Running the watcher](#running-the-watcher)). When `running` is `false`, `notRunningReason` includes the exact command to start it.
+
+> **Note:** there are no `EventWatchStart`/`EventWatchStop` tools — starting and stopping the watcher is done from a shell (`lark-serve` / `kill`), not through MCP, so process lifecycle stays visible and controllable.
 
 ---
 
