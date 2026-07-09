@@ -174,8 +174,9 @@ export function streamEvents(filter: StreamFilter, onEvent: (payload: StreamMess
       if (silenceTimer) { clearTimeout(silenceTimer) }
       if (closed) { return }
       onStatus(`Disconnected — retrying in ${backoff}ms`)
-      const timer = setTimeout(connectOnce, backoff)
-      timer.unref?.()
+      // Not unref'd: while disconnected, this timer is the only thing keeping the process
+      // alive to retry — unref'ing it let the process exit before the reconnect ever fired.
+      setTimeout(connectOnce, backoff)
       backoff = Math.min(backoff * 2, MAX_BACKOFF_MS)
     })
   }
