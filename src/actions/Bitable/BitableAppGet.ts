@@ -1,6 +1,7 @@
 import { createAction } from '@silkweave/core'
 import z from 'zod'
 import { TokenClient } from '../../classes/TokenClient.js'
+import { userIdSchema } from '../../lib/auth.js'
 
 export const BitableAppGet = createAction({
   name: 'bitableAppGet',
@@ -8,11 +9,11 @@ export const BitableAppGet = createAction({
   args: ['userId'],
   input: z.object({
     appToken: z.string().describe('The app_token of the bitable'),
-    userId: z.string().optional().default('default')
+    userId: userIdSchema()
   }),
   run: async ({ userId, appToken }) => {
     const client = new TokenClient(userId)
-    return client.withUser((lark, options) => lark.bitable.app.get({
+    return client.withAuth((lark, options) => lark.bitable.app.get({
       path: { app_token: appToken }
     }, options))
   }

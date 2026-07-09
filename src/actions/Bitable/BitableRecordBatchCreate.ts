@@ -1,6 +1,7 @@
 import { createAction } from '@silkweave/core'
 import z from 'zod'
 import { TokenClient } from '../../classes/TokenClient.js'
+import { userIdSchema } from '../../lib/auth.js'
 
 export const BitableRecordBatchCreate = createAction({
   name: 'bitableRecordBatchCreate',
@@ -12,11 +13,11 @@ export const BitableRecordBatchCreate = createAction({
     records: z.array(z.object({
       fields: z.record(z.string(), z.unknown()).describe('Field values as { fieldName: value }')
     })).describe('Array of records to create'),
-    userId: z.string().optional().default('default')
+    userId: userIdSchema()
   }),
   run: async ({ userId, appToken, tableId, records }) => {
     const client = new TokenClient(userId)
-    return client.withUser((lark, options) => lark.bitable.appTableRecord.batchCreate({
+    return client.withAuth((lark, options) => lark.bitable.appTableRecord.batchCreate({
       path: { app_token: appToken, table_id: tableId },
       data: { records: records as Array<{ fields: Record<string, string> }> }
     }, options))

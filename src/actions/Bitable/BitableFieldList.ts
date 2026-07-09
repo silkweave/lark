@@ -1,6 +1,7 @@
 import { createAction } from '@silkweave/core'
 import z from 'zod'
 import { TokenClient } from '../../classes/TokenClient.js'
+import { userIdSchema } from '../../lib/auth.js'
 
 export const BitableFieldList = createAction({
   name: 'bitableFieldList',
@@ -12,11 +13,11 @@ export const BitableFieldList = createAction({
     viewId: z.string().optional().describe('View ID to scope field visibility'),
     pageToken: z.string().optional().describe('Pagination token'),
     pageSize: z.coerce.number().optional().describe('Number of results per page (max 100)'),
-    userId: z.string().optional().default('default')
+    userId: userIdSchema()
   }),
   run: async ({ userId, appToken, tableId, viewId, pageToken, pageSize }) => {
     const client = new TokenClient(userId)
-    return client.withUser((lark, options) => lark.bitable.appTableField.list({
+    return client.withAuth((lark, options) => lark.bitable.appTableField.list({
       path: { app_token: appToken, table_id: tableId },
       params: { view_id: viewId, page_token: pageToken, page_size: pageSize }
     }, options))

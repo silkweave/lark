@@ -9,6 +9,7 @@ Lark/Feishu document parser and API client exposed as both an **MCP server** and
 - Manage Wiki spaces, nodes, and search
 - Read and write Lark Base (Bitable) apps, tables, fields, and records
 - Send messages to users and group chats
+- Subscribe to incoming messages (WebSocket long connection, no public URL needed)
 - List organization contacts
 - OAuth authentication flow for user-scoped API access
 - Pluggable block parser system for Lark document types
@@ -63,10 +64,12 @@ Once the MCP server is running, use the authentication tools to connect:
 
 1. **Call `AuthenAuthorize`** with your `clientId` and `clientSecret` -- this saves your app credentials and returns an OAuth URL
 2. **Open the URL** in a browser -- Lark asks you to authorize the app, then redirects to `http://localhost:3000/callback?code=<CODE>` (copy the code from the URL)
-3. **Call `AuthenOauthToken`** with the `code` -- tokens are stored in `lark.json`
+3. **Call `AuthenOauthToken`** with the `code` -- tokens are stored in `~/.silkweave-lark.json`
 4. **Call `AuthenUserInfo`** to verify -- you should see your name and email
 
-That's it. All subsequent tool calls are authenticated automatically. Credentials persist across sessions in `lark.json`.
+That's it. All subsequent tool calls are authenticated automatically. Credentials persist across sessions in `~/.silkweave-lark.json`.
+
+> **Bot-only usage:** if you only need bot-level access (tenant token), steps 2-4 of the OAuth flow are optional — call `AuthenAuthorize` once with `clientId`/`clientSecret` to save the app credentials, then pass `userId: 'tenant'` to any tool.
 
 ## Required Scopes
 
@@ -106,29 +109,72 @@ npx @silkweave/lark
 
 ## Authentication
 
-@silkweave/lark supports two authentication modes:
+@silkweave/lark supports two authentication modes, selected per call via the `userId` parameter:
 
-### App-level (Tenant Token)
+### App-level (Tenant Access Token) — `userId: 'tenant'`
 
-Used automatically for bot-level API calls (e.g. sending messages). Tokens are refreshed automatically before expiry.
+Pass `userId: 'tenant'` to any tool to authenticate with the app's **Tenant Access Token** and act as the **bot**. No user login is required — only the app credentials saved by `AuthenAuthorize` (`clientId` + `clientSecret`). The token is created and refreshed automatically before expiry.
 
-### User-level (OAuth)
+Use this for bot workflows: sending messages to channels, reading chats the bot is in, or accessing docs/Base apps shared with the bot. The bot can only reach resources it has been granted access to (e.g. added as a group member, or the document shared with it), and the app needs the corresponding permissions enabled in the Lark developer console.
 
-Required for user-scoped operations (documents, wiki, Base, contacts). See [Quick Start](#3-authenticate) above for the flow.
+### User-level (OAuth) — `userId: '<store key>'`
+
+Pass any other value (default: `'default'`) to act as an OAuth-authenticated user; the value selects which stored user token to use, so multiple users can be authenticated side by side under different keys. Requires the one-time login flow in [Quick Start](#3-authenticate). Access and refresh tokens are refreshed automatically; when the refresh token itself expires, re-authenticate.
+
+**Exceptions:** `AuthenUserInfo` is inherently user-scoped (`'tenant'` is rejected). `ImMessageSend` and `ImMessageReply` default to `'tenant'` (send as the bot) instead of `'default'`.
+
+## Message Event Subscriptions
+
+The message watcher receives incoming messages over Lark's **WebSocket long connection** — no public webhook URL required. Messages matching a subscription are appended to a local event log (`~/.silkweave-lark.events.jsonl`, readable via `EventList`) and can optionally trigger a shell command per event.
+
+### Lark app prerequisites
+
+In the [Lark developer console](https://open.larksuite.com/):
+
+1. **Events & Callbacks → Event Configuration**: select **Long Connection** mode
+2. **Add the event** `im.message.receive_v1` ("Receive messages")
+3. **Permissions**: enable the message-receiving scopes you need — `im:message.p2p_msg` (direct messages), `im:message.group_at_msg` (group messages that @-mention the bot) and/or `im:message.group_msg` (all group messages)
+4. Add the bot to the group chats you want to observe, then publish a new app version
+
+### Creating subscriptions
+
+```
+EventSubscriptionCreate { "chatId": "oc_xxx", "mentionBot": true }
+```
+
+Filters are optional and combine with AND: `chatId` (specific chat), `mentionBot` (only @-mentions of the bot), `keywords` (case-insensitive match). Omit all filters to record every message the bot receives. `onEventCommand` spawns a detached shell command per matching message with `LARK_*` env vars (`LARK_EVENT_JSON`, `LARK_CHAT_ID`, `LARK_TEXT`, `LARK_MESSAGE_ID`, `LARK_SENDER_OPEN_ID`, `LARK_MENTIONED_BOT`, `LARK_SUBSCRIPTION_ID`) — use it to notify or kick off an agent.
+
+Subscriptions are persisted in `~/.silkweave-lark.json` and evaluated live — you can add or remove them while the watcher is running, from any process.
+
+### Running the watcher
+
+Two ways to keep the connection alive:
+
+- **Inside the MCP server** — call `EventWatchStart`. The watcher lives as long as the MCP server process and resumes automatically on server boot (`autoStart`). Good for interactive sessions.
+- **As a standalone service** — run `npx @silkweave/lark lark-serve` (or `pnpm serve` in dev). This keeps subscriptions alive independently of any agent or MCP client. Run it under `launchd`, `systemd`, or `pm2` for a persistent daemon.
+
+Only one watcher may run at a time (guarded by a pidfile, `~/.silkweave-lark.watcher.pid`); `EventWatchStatus` reports an `externalPid` when the watcher is running in another process.
+
+### Reading events
+
+`EventList` returns collected events (filter by `chatId`, `subscriptionId`, `mentionedBot`, `since`). Each event includes the extracted plain `text` (mention placeholders resolved), raw `content` JSON, sender, chat, and mention metadata — everything needed to reply via `ImMessageReply` with `messageId`.
 
 ## Tools Reference
 
-All tools accept an optional `userId` parameter (default: `'default'`) to select which stored OAuth token to use for the request.
+All tools accept an optional `userId` parameter selecting the auth identity: `'tenant'` for the app's Tenant Access Token (bot), or a token store key (default: `'default'`) for a user's OAuth token. See [Authentication](#authentication).
 
 ### Authentication
 
 #### `AuthenAuthorize`
 
-Generate an OAuth authorization URL for user login.
+Generate an OAuth authorization URL for user login. Also saves the app credentials (required once before any tool call, including tenant/bot usage).
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `userId` | string | No | Token store key (default: `'default'`) |
+| `clientId` | string | No | Lark App ID (persisted; required on first call) |
+| `clientSecret` | string | No | Lark App Secret (persisted; required on first call) |
+| `redirectUri` | string | No | OAuth redirect URI (default: `http://localhost:3000/callback`) |
+| `userId` | string | No | Token store key the user tokens will be saved under (default: `'default'`) |
 
 **Returns:** `{ authUrl: string }`
 
@@ -168,7 +214,7 @@ Get metadata for a Lark Base app.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `appToken` | string | Yes | Base app token |
-| `userId` | string | No | Token store key |
+| `userId` | string | No | `'tenant'` (bot) or user token store key |
 
 **Returns:** `{ app: { app_token, name, revision, time_zone, is_advanced } }`
 
@@ -183,7 +229,7 @@ List tables in a Base app.
 | `appToken` | string | Yes | Base app token |
 | `pageSize` | number | No | Results per page |
 | `pageToken` | string | No | Pagination token |
-| `userId` | string | No | Token store key |
+| `userId` | string | No | `'tenant'` (bot) or user token store key |
 
 **Returns:** `{ items: [{ table_id, name, revision }], hasMore, pageToken }`
 
@@ -199,7 +245,7 @@ Create a new table in a Base app, optionally with initial fields.
 | `name` | string | Yes | Table name |
 | `defaultViewName` | string | No | Default view name |
 | `fields` | array | No | Initial fields (`fieldName`, `type`, `uiType`) |
-| `userId` | string | No | Token store key |
+| `userId` | string | No | `'tenant'` (bot) or user token store key |
 
 **Returns:** `{ table_id }`
 
@@ -215,7 +261,7 @@ List fields in a table.
 | `tableId` | string | Yes | Table ID |
 | `pageSize` | number | No | Results per page |
 | `pageToken` | string | No | Pagination token |
-| `userId` | string | No | Token store key |
+| `userId` | string | No | `'tenant'` (bot) or user token store key |
 
 **Returns:** `{ items: [{ field_id, field_name, type, ui_type, property }], hasMore, pageToken }`
 
@@ -234,7 +280,7 @@ Create a new field in a table.
 | `uiType` | string | No | UI type hint |
 | `property` | string | No | Field property as JSON string (e.g. `{"options":[{"name":"Done"}]}`) |
 | `description` | string | No | Field description |
-| `userId` | string | No | Token store key |
+| `userId` | string | No | `'tenant'` (bot) or user token store key |
 
 **Returns:** `{ field: { field_id, field_name, type, ui_type, property } }`
 
@@ -254,7 +300,7 @@ Update an existing field (e.g. rename, change options).
 | `uiType` | string | No | UI type hint |
 | `property` | string | No | Field property as JSON string |
 | `description` | string | No | Field description |
-| `userId` | string | No | Token store key |
+| `userId` | string | No | `'tenant'` (bot) or user token store key |
 
 **Returns:** `{ field: { field_id, field_name, type, ui_type, property } }`
 
@@ -269,7 +315,7 @@ Delete a field from a table.
 | `appToken` | string | Yes | Base app token |
 | `tableId` | string | Yes | Table ID |
 | `fieldId` | string | Yes | Field ID to delete |
-| `userId` | string | No | Token store key |
+| `userId` | string | No | `'tenant'` (bot) or user token store key |
 
 ---
 
@@ -282,7 +328,7 @@ Create a single record in a table.
 | `appToken` | string | Yes | Base app token |
 | `tableId` | string | Yes | Table ID |
 | `fields` | string | Yes | Record fields as JSON string (`{ "Field Name": value }`) |
-| `userId` | string | No | Token store key |
+| `userId` | string | No | `'tenant'` (bot) or user token store key |
 
 **Returns:** `{ record: { record_id, fields } }`
 
@@ -297,7 +343,7 @@ Create multiple records in a table in one request.
 | `appToken` | string | Yes | Base app token |
 | `tableId` | string | Yes | Table ID |
 | `records` | string | Yes | Array of record field objects as JSON string |
-| `userId` | string | No | Token store key |
+| `userId` | string | No | `'tenant'` (bot) or user token store key |
 
 **Returns:** `{ records: [{ record_id, fields }] }`
 
@@ -316,7 +362,7 @@ Search/query records in a table with optional filters and sorting.
 | `fieldNames` | string | No | Comma-separated field names to return |
 | `pageSize` | number | No | Results per page |
 | `pageToken` | string | No | Pagination token |
-| `userId` | string | No | Token store key |
+| `userId` | string | No | `'tenant'` (bot) or user token store key |
 
 **Returns:** `{ items: [{ record_id, fields }], hasMore, pageToken }`
 
@@ -331,7 +377,7 @@ Update one or more records in a table.
 | `appToken` | string | Yes | Base app token |
 | `tableId` | string | Yes | Table ID |
 | `records` | string | Yes | Array of `{ record_id, fields }` as JSON string |
-| `userId` | string | No | Token store key |
+| `userId` | string | No | `'tenant'` (bot) or user token store key |
 
 **Returns:** `{ records: [{ record_id, fields }] }`
 
@@ -346,7 +392,7 @@ Delete one or more records from a table.
 | `appToken` | string | Yes | Base app token |
 | `tableId` | string | Yes | Table ID |
 | `recordIds` | string | Yes | Comma-separated record IDs to delete |
-| `userId` | string | No | Token store key |
+| `userId` | string | No | `'tenant'` (bot) or user token store key |
 
 ---
 
@@ -361,7 +407,7 @@ List users in the organization by department.
 | `departmentId` | string | No | Department ID (`'0'` for root/all users) |
 | `pageSize` | number | No | Results per page (max 50) |
 | `pageToken` | string | No | Pagination token |
-| `userId` | string | No | Token store key |
+| `userId` | string | No | `'tenant'` (bot) or user token store key |
 
 **Returns:** `{ items: [{ openId, userId, name, enName, email, mobile }], hasMore, pageToken }`
 
@@ -378,7 +424,7 @@ Export a Lark document to Markdown.
 | `documentId` | string | Yes | Lark document ID |
 | `includeTitle` | boolean | No | Include document title as H1 (default: `true`) |
 | `path` | string | No | Write to file path instead of returning content |
-| `userId` | string | No | Token store key |
+| `userId` | string | No | `'tenant'` (bot) or user token store key |
 
 **Returns:** Node metadata + markdown content (or file path if `path` is provided)
 
@@ -393,7 +439,7 @@ Import Markdown content into an existing Lark document. Replaces all existing co
 | `documentId` | string | Yes | Target document ID |
 | `path` | string | Yes | Local path to Markdown file |
 | `userIdType` | `'user_id'` \| `'union_id'` \| `'open_id'` | No | User ID type |
-| `userId` | string | No | Token store key |
+| `userId` | string | No | `'tenant'` (bot) or user token store key |
 
 **Returns:** `{ documentId, spaceId, title, blocksDeleted, blocksCreated }`
 
@@ -410,7 +456,7 @@ List all blocks in a Lark document.
 | `documentRevisionId` | number | No | Specific document revision |
 | `pageSize` | number | No | Results per page |
 | `pageToken` | string | No | Pagination token |
-| `userId` | string | No | Token store key |
+| `userId` | string | No | `'tenant'` (bot) or user token store key |
 
 **Returns:** Block list with pagination
 
@@ -426,7 +472,7 @@ List all wiki spaces accessible to the user.
 |-----------|------|----------|-------------|
 | `pageSize` | number | No | Results per page |
 | `pageToken` | string | No | Pagination token |
-| `userId` | string | No | Token store key |
+| `userId` | string | No | `'tenant'` (bot) or user token store key |
 
 **Returns:** List of wiki spaces with pagination
 
@@ -442,7 +488,7 @@ List nodes in a wiki space.
 | `parentNodeToken` | string | No | Filter to children of this node |
 | `pageSize` | number | No | Results per page |
 | `pageToken` | string | No | Pagination token |
-| `userId` | string | No | Token store key |
+| `userId` | string | No | `'tenant'` (bot) or user token store key |
 
 **Returns:** List of wiki nodes with pagination
 
@@ -456,7 +502,7 @@ Get details of a specific wiki node.
 |-----------|------|----------|-------------|
 | `token` | string | Yes | Wiki node token |
 | `objType` | `'doc'` \| `'docx'` \| `'sheet'` \| `'mindnote'` \| `'bitable'` \| `'file'` \| `'slides'` \| `'wiki'` | No | Object type filter |
-| `userId` | string | No | Token store key |
+| `userId` | string | No | `'tenant'` (bot) or user token store key |
 
 **Returns:** Full node details
 
@@ -471,7 +517,7 @@ Create a new document node in a wiki space.
 | `spaceId` | string | Yes | Wiki space ID |
 | `parentNodeToken` | string | No | Parent node (omit for top-level) |
 | `title` | string | No | Document title |
-| `userId` | string | No | Token store key |
+| `userId` | string | No | `'tenant'` (bot) or user token store key |
 
 **Returns:** `{ spaceId, nodeToken, objToken, title, parentNodeToken }`
 
@@ -487,7 +533,7 @@ Move a wiki node (and its children) to a different parent or space.
 | `nodeToken` | string | Yes | Node to move |
 | `targetParentToken` | string | No | Target parent node |
 | `targetSpaceId` | string | No | Target space for cross-space moves |
-| `userId` | string | No | Token store key |
+| `userId` | string | No | `'tenant'` (bot) or user token store key |
 
 **Returns:** `{ spaceId, nodeToken, objToken, objType, parentNodeToken, title, hasChild }`
 
@@ -504,7 +550,7 @@ Full-text search across wiki spaces.
 | `nodeId` | string | No | Filter to descendants of a node (requires `spaceId`) |
 | `pageSize` | number | No | Results per page (max 50, default 20) |
 | `pageToken` | string | No | Pagination token |
-| `userId` | string | No | Token store key |
+| `userId` | string | No | `'tenant'` (bot) or user token store key |
 
 **Returns:** `{ items: [{ nodeId, spaceId, objType, title, url, objToken }], hasMore, pageToken }`
 
@@ -521,7 +567,7 @@ List chats that the user or bot is in (excludes P2P chats).
 | `sortType` | `'ByCreateTimeAsc'` \| `'ByActiveTimeDesc'` | No | Sort order |
 | `pageSize` | number | No | Results per page |
 | `pageToken` | string | No | Pagination token |
-| `userId` | string | No | Token store key |
+| `userId` | string | No | `'tenant'` (bot) or user token store key |
 
 **Returns:** `{ items: [{ chatId, name, description, ownerId, external, labels }], hasMore, pageToken }`
 
@@ -536,7 +582,7 @@ Search for chats by keyword.
 | `query` | string | Yes | Search keyword |
 | `pageSize` | number | No | Results per page |
 | `pageToken` | string | No | Pagination token |
-| `userId` | string | No | Token store key |
+| `userId` | string | No | `'tenant'` (bot) or user token store key |
 
 **Returns:** `{ items: [{ chatId, name, description, ownerId, external, labels }], hasMore, pageToken }`
 
@@ -544,7 +590,7 @@ Search for chats by keyword.
 
 #### `ImMessageSend`
 
-Send a message to a user or group chat. Messages are sent as the bot (uses app credentials, not user tokens).
+Send a message to a user or group chat. Sends as the bot by default (`userId: 'tenant'`); pass a user token store key to send as that user.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -553,6 +599,7 @@ Send a message to a user or group chat. Messages are sent as the bot (uses app c
 | `msgType` | `'text'` \| `'post'` \| `'interactive'` | Yes | Message type |
 | `content` | string | Yes | Message content (JSON string) |
 | `uuid` | string | No | Idempotency key |
+| `userId` | string | No | `'tenant'` (bot, default) or user token store key |
 
 **Returns:** `{ messageId, chatId, createTime, msgType, senderId, senderType }`
 
@@ -566,6 +613,99 @@ Send a message to a user or group chat. Messages are sent as the bot (uses app c
   "content": "{\"text\": \"Hello from silkweave-lark!\"}"
 }
 ```
+
+---
+
+#### `ImMessageReply`
+
+Reply to a specific message. Replies as the bot by default (`userId: 'tenant'`); pass a user token store key to reply as that user.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `messageId` | string | Yes | Message ID to reply to |
+| `msgType` | `'text'` \| `'post'` \| `'interactive'` | Yes | Message type |
+| `content` | string | Yes | Message content (JSON string) |
+| `replyInThread` | boolean | No | Reply in a thread |
+| `uuid` | string | No | Idempotency key |
+| `userId` | string | No | `'tenant'` (bot, default) or user token store key |
+
+**Returns:** Message object (same shape as `ImMessageSend`)
+
+---
+
+### Events
+
+See [Message Event Subscriptions](#message-event-subscriptions) for setup. These tools always operate with app credentials (no `userId` needed).
+
+#### `EventSubscriptionCreate`
+
+Create a persistent message subscription.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `chatId` | string | No | Restrict to a specific chat (omit for all chats the bot is in) |
+| `chatName` | string | No | Human-readable chat name (informational) |
+| `mentionBot` | boolean | No | Only messages that @-mention the bot |
+| `keywords` | string[] | No | Only messages containing one of these keywords |
+| `onEventCommand` | string | No | Shell command spawned per matching message (`LARK_*` env vars) |
+
+**Returns:** `{ subscription, watcher }`
+
+---
+
+#### `EventSubscriptionList`
+
+List subscriptions, `autoStart` setting, and watcher status.
+
+---
+
+#### `EventSubscriptionDelete`
+
+Delete a subscription by `id`.
+
+---
+
+#### `EventWatchStart`
+
+Start the watcher (WebSocket long connection) in the current process. Sets `autoStart` so it resumes on MCP server boot.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `autoStart` | boolean | No | Auto-start watcher on MCP server boot (default: `true`) |
+
+**Returns:** Watcher status
+
+---
+
+#### `EventWatchStop`
+
+Stop the watcher in the current process.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `disableAutoStart` | boolean | No | Also disable auto-start (default: `true`) |
+
+---
+
+#### `EventWatchStatus`
+
+Watcher status: running state, bot identity, counters, recent events, `externalPid` if running in another process.
+
+---
+
+#### `EventList`
+
+Read collected message events from the local event log.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `chatId` | string | No | Filter to a specific chat |
+| `subscriptionId` | string | No | Filter to a specific subscription |
+| `mentionedBot` | boolean | No | Filter to bot @-mentions |
+| `since` | string | No | Only events received after this ISO timestamp |
+| `limit` | number | No | Max events returned, newest kept (default: 20) |
+
+**Returns:** `{ events: MessageEventRecord[], total }`
 
 ---
 
@@ -590,22 +730,24 @@ Restart the MCP server to pick up code changes.
 ```
 src/
   index.ts          # Library exports
-  mcp.ts            # MCP server (stdio transport)
+  mcp.ts            # MCP server (stdio transport, auto-starts message watcher)
   cli.ts            # CLI (interactive transport)
+  serve.ts          # Standalone message watcher service (lark-serve)
   actions/          # Tool definitions (createAction + zod schemas)
     Authen/         # OAuth flow
     Bitable/        # Base apps, tables, fields, records
     Contact/        # Organization users
     Docx/           # Document export/import
+    Event/          # Message subscriptions + watcher lifecycle
     Im/             # Chat and messaging
     Mcp/            # Server management
     Wiki/           # Wiki spaces and nodes
   classes/
-    TokenClient.ts  # User and tenant agnostic token persistence client (lark.json)
+    TokenClient.ts  # User and tenant agnostic token persistence client (~/.silkweave-lark.json)
     DocxParser.ts   # Lark blocks -> Markdown converter
   parser/           # Block type parsers (text, heading, list, table, etc.)
   types/            # TypeScript type definitions
-  lib/              # Shared utilities (API helpers, env, scopes)
+  lib/              # Shared utilities (API helpers, scopes, message watcher)
 ```
 
 ## Development
@@ -632,10 +774,10 @@ pnpm clean
 
 ## Publishing
 
-This is a private scoped package. Publish with restricted access:
+This is a public scoped package. Publish with:
 
 ```bash
-pnpm publish --no-git-checks --access restricted
+pnpm publish --no-git-checks
 ```
 
 ## License

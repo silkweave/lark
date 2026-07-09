@@ -49,6 +49,11 @@ export interface ApiSchema {
     BODY: void
     RESPONSE: { code: number; msg: string; data: LarkUserInfo }
   }
+  'BotV3Info': {
+    QUERY: void
+    BODY: void
+    RESPONSE: { code: number; msg: string; bot?: { activate_status?: number; app_name?: string; avatar_url?: string; open_id?: string } }
+  }
   'WikiV2NodesSearch': {
     QUERY: { page_token?: string; page_size?: number }
     BODY: { query: string; space_id?: string; node_id?: string }
@@ -77,6 +82,7 @@ export const ApiUrlMap: Record<ApiUrl, string> = {
   'AuthenV1Authorize': 'https://open.larksuite.com/open-apis/authen/v1/authorize',
   'AuthenV2OauthToken': 'https://open.larksuite.com/open-apis/authen/v2/oauth/token',
   'AuthenV1UserInfo': 'https://open.larksuite.com/open-apis/authen/v1/user_info',
+  'BotV3Info': 'https://open.larksuite.com/open-apis/bot/v3/info',
   'WikiV2NodesSearch': 'https://open.larksuite.com/open-apis/wiki/v2/nodes/search'
 }
 
@@ -88,9 +94,9 @@ export async function parseLarkResponse<T>(promise: Promise<LarkResponse<T>>) {
 }
 
 export async function fetchLark<K extends ApiUrl, S extends ApiSchema[K]>(method: 'GET' | 'POST' | 'PUT' | 'DELETE', key: K, query: S['QUERY'], body: S['BODY'], token?: string): Promise<S['RESPONSE']> {
-  const headers: HeadersInit = { 'Content-Type': 'application/json; charset=utf-8' }
+  const headers: Record<string, string> = { 'Content-Type': 'application/json; charset=utf-8' }
   const init: RequestInit = { method, headers }
-  if (token) { init.headers = { 'Authorization': `Bearer ${token}` } }
+  if (token) { headers['Authorization'] = `Bearer ${token}` }
   const uri = buildLarkUrl(key, query)
   if (body) { init.body = JSON.stringify(body) }
   const response = await fetch(uri.toString(), init)

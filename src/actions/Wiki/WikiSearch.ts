@@ -1,6 +1,7 @@
 import { createAction } from '@silkweave/core'
 import z from 'zod'
 import { TokenClient } from '../../classes/TokenClient.js'
+import { userIdSchema } from '../../lib/auth.js'
 import { fetchLark, parseLarkResponse } from '../../lib/api.js'
 
 export const WikiSearch = createAction({
@@ -13,7 +14,7 @@ export const WikiSearch = createAction({
     nodeId: z.string().optional().describe('Filter results to descendants of a specific node (requires spaceId)'),
     pageSize: z.int().optional().describe('Number of results per page (max 50, default 20)'),
     pageToken: z.string().optional().describe('Pagination token for next page'),
-    userId: z.string().optional().default('default')
+    userId: userIdSchema()
   }),
   run: async ({ userId, query, spaceId, nodeId, pageSize, pageToken }) => {
     const client = new TokenClient(userId)

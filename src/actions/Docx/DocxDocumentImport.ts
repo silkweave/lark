@@ -2,15 +2,16 @@ import { createAction } from '@silkweave/core'
 import { existsSync, readFileSync } from 'fs'
 import z from 'zod'
 import { TokenClient } from '../../classes/TokenClient.js'
+import { userIdSchema } from '../../lib/auth.js'
 
 export const DocxDocumentImport = createAction({
   name: 'docxDocumentImport',
   description: 'Import Markdown into exsting Lark Document',
   input: z.object({
-    documentId: z.string(),
+    documentId: z.string().describe('Lark document ID (or wiki node token)'),
     path: z.string().describe('Local file path to markdown file'),
-    userIdType: z.enum(['user_id', 'union_id', 'open_id']).optional(),
-    userId: z.string().optional().default('default')
+    userIdType: z.enum(['user_id', 'union_id', 'open_id']).optional().describe('ID type used for user fields in the response'),
+    userId: userIdSchema()
   }),
   run: async ({ documentId, path, userIdType, userId }) => {
     const client = new TokenClient(userId)
@@ -27,7 +28,7 @@ export const DocxDocumentImport = createAction({
     }
 
     // Load Document
-    const nodeResponse = await client.withUser((lark, options) => lark.wiki.space.getNode({
+    const nodeResponse = await client.withAuth((lark, options) => lark.wiki.space.getNode({
       params: { token: documentId, obj_type: 'docx' }
     }, options))
     if (!nodeResponse.node) { throw new Error('Wiki node not found') }
@@ -40,7 +41,7 @@ export const DocxDocumentImport = createAction({
     const h1Match = content.match(/^#\s+(.+)\n?/)
     if (h1Match) {
       const title = h1Match[1].trim()
-      await client.withUser((lark, options) => lark.wiki.spaceNode.updateTitle({
+      await client.withAuth((lark, options) => lark.wiki.spaceNode.updateTitle({
         path: { space_id: nodeResponse.node!.space_id!, node_token: nodeResponse.node!.node_token! },
         data: { title }
       }, options))
@@ -49,7 +50,7 @@ export const DocxDocumentImport = createAction({
     }
 
     // Prepare Blocks (before deleting existing content)
-    const convertResponse = await client.withUser((lark, options) => lark.docx.v1.document.convert({
+    const convertResponse = await client.withAuth((lark, options) => lark.docx.v1.document.convert({
       data: { content, content_type: 'markdown' },
       params: { user_id_type: userIdType }
     }, options))
@@ -65,14 +66,14 @@ export const DocxDocumentImport = createAction({
     }
 
     // Delete existing blocks (after conversion succeeds)
-    const blocksResponse = await client.withUser((lark, options) => lark.docx.documentBlock.list({
+    const blocksResponse = await client.withAuth((lark, options) => lark.docx.documentBlock.list({
       path: { document_id: documentId },
       params: { user_id_type: userIdType }
     }, options))
     const block = blocksResponse.items?.at(0)
     if (!block?.block_id) { throw new Error('No block found') }
     if (block.children && block.children.length > 0) {
-      await client.withUser((lark, options) => lark.docx.v1.documentBlockChildren.batchDelete({
+      await client.withAuth((lark, options) => lark.docx.v1.documentBlockChildren.batchDelete({
         path: { document_id: documentId, block_id: block.block_id! },
         data: { start_index: 0, end_index: block.children!.length }
       }, options))
@@ -82,7 +83,7 @@ export const DocxDocumentImport = createAction({
     // Insert Blocks
     let insertResponse
     try {
-      insertResponse = await client.withUser((lark, options) => lark.docx.v1.documentBlockDescendant.create({
+      insertResponse = await client.withAuth((lark, options) => lark.docx.v1.documentBlockDescendant.create({
         path: { document_id: documentId, block_id: documentId },
         params: { user_id_type: userIdType },
         data: {

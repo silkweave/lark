@@ -1,4 +1,5 @@
 export * from './classes/DocxParser.js'
 export * from './classes/TokenClient.js'
 export * from './lib/api.js'
+export * from './lib/auth.js'
 export * from './lib/scopes.js'

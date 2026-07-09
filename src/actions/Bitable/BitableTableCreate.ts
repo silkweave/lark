@@ -1,6 +1,7 @@
 import { createAction } from '@silkweave/core'
 import z from 'zod'
 import { TokenClient } from '../../classes/TokenClient.js'
+import { userIdSchema } from '../../lib/auth.js'
 
 const fieldSchema = z.object({
   fieldName: z.string().describe('Field name'),
@@ -17,11 +18,11 @@ export const BitableTableCreate = createAction({
     name: z.string().describe('Table name'),
     defaultViewName: z.string().optional().describe('Default view name'),
     fields: z.array(fieldSchema).optional().describe('Initial fields to create with the table'),
-    userId: z.string().optional().default('default')
+    userId: userIdSchema()
   }),
   run: async ({ userId, appToken, name, defaultViewName, fields }) => {
     const client = new TokenClient(userId)
-    return client.withUser((lark, options) => lark.bitable.appTable.create({
+    return client.withAuth((lark, options) => lark.bitable.appTable.create({
       path: { app_token: appToken },
       data: {
         table: {

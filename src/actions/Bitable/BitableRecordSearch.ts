@@ -1,6 +1,7 @@
 import { createAction } from '@silkweave/core'
 import z from 'zod'
 import { TokenClient } from '../../classes/TokenClient.js'
+import { userIdSchema } from '../../lib/auth.js'
 
 const conditionSchema = z.object({
   fieldName: z.string().describe('Field name to filter on'),
@@ -30,11 +31,11 @@ export const BitableRecordSearch = createAction({
     automaticFields: z.boolean().optional().describe('Include auto fields (created_time, etc.)'),
     pageToken: z.string().optional().describe('Pagination token'),
     pageSize: z.coerce.number().optional().describe('Number of results per page (max 100)'),
-    userId: z.string().optional().default('default')
+    userId: userIdSchema()
   }),
   run: async ({ userId, appToken, tableId, viewId, fieldNames, filter, sort, automaticFields, pageToken, pageSize }) => {
     const client = new TokenClient(userId)
-    return client.withUser((lark, options) => lark.bitable.appTableRecord.search({
+    return client.withAuth((lark, options) => lark.bitable.appTableRecord.search({
       path: { app_token: appToken, table_id: tableId },
       params: { page_token: pageToken, page_size: pageSize },
       data: {

@@ -7,8 +7,8 @@ export const AuthenOauthToken = createAction({
   description: 'Get Oauth Token from Authorization Code',
   args: ['code'],
   input: z.object({
-    userId: z.string().optional().default('default'),
-    code: z.string()
+    userId: z.string().optional().default('default').describe('Token store key under which the user\'s OAuth tokens will be saved (default: \'default\')'),
+    code: z.string().describe('Authorization code from the OAuth callback URL')
   }),
   run: async ({ userId, code }) => {
     const client = new TokenClient(userId)

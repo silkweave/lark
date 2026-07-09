@@ -6,6 +6,7 @@ import { dirname, join } from 'path'
 import { buildLarkUrl, fetchLark, parseLarkResponse } from '../lib/api.js'
 import { scopes } from '../lib/scopes.js'
 import { LarkResponse } from '../types/api.js'
+import { MessageSubscription, WatcherConfig } from '../types/events.js'
 
 export interface TokenEntry {
   accessToken: string
@@ -22,6 +23,9 @@ export interface LarkAuthOptions {
   path?: Record<string, string>
 }
 
+/** Sentinel userId that selects the app's Tenant Access Token (bot identity) instead of a user OAuth token */
+export const TENANT_USER_ID = 'tenant'
+
 export interface TokenRegistry {
   clientId: string
   clientSecret: string
@@ -29,6 +33,7 @@ export interface TokenRegistry {
   tenantToken?: string
   tenantTokenExpiresAt?: number
   entries: Record<string, TokenEntry>
+  watcher?: WatcherConfig
 }
 
 export class TokenClient {
@@ -71,7 +76,14 @@ export class TokenClient {
     })
   }
 
+  public get isTenant() { return this.key === TENANT_USER_ID }
+
+  public async withAuth<T>(fn: (lark: Client, options: LarkAuthOptions) => Promise<LarkResponse<T>>) {
+    return this.isTenant ? this.withTenant(fn) : this.withUser(fn)
+  }
+
   public async withUser<T>(fn: (lark: Client, options: LarkAuthOptions) => Promise<LarkResponse<T>>) {
+    if (this.isTenant) { throw new Error(`This action requires a user token — userId '${TENANT_USER_ID}' is not supported here`) }
     await this.assertValidAccessToken()
     if (!this.clientId) { throw new Error('Client ID is required, please re-authenticate') }
     if (!this.clientSecret) { throw new Error('Client Secret is required, please re-authenticate') }
@@ -80,6 +92,8 @@ export class TokenClient {
   }
 
   public async withTenant<T>(fn: (lark: Client, options: LarkAuthOptions) => Promise<LarkResponse<T>>) {
+    if (!this.clientId) { throw new Error('Client ID is required, please run AuthenAuthorize first') }
+    if (!this.clientSecret) { throw new Error('Client Secret is required, please run AuthenAuthorize first') }
     await this.assertValidTenantToken()
     const client = new Client({ appId: this.clientId, appSecret: this.clientSecret, appType: AppType.SelfBuild, domain: Domain.Lark, loggerLevel: LoggerLevel.error })
     return parseLarkResponse(fn(client, withTenantToken(this.tenantToken!)))
@@ -126,6 +140,29 @@ export class TokenClient {
     this.registry.tenantToken = response.tenant_access_token
     this.registry.tenantTokenExpiresAt = now + response.expire * 1000
     this.flush()
+  }
+
+  public getWatcherConfig(): WatcherConfig {
+    return this.registry.watcher ?? { subscriptions: [] }
+  }
+
+  public setWatcherConfig(patch: Partial<WatcherConfig>): WatcherConfig {
+    this.registry.watcher = { ...this.getWatcherConfig(), ...patch }
+    this.flush()
+    return this.registry.watcher
+  }
+
+  public addSubscription(subscription: MessageSubscription): void {
+    const config = this.getWatcherConfig()
+    this.setWatcherConfig({ subscriptions: [...config.subscriptions, subscription] })
+  }
+
+  public removeSubscription(id: string): boolean {
+    const config = this.getWatcherConfig()
+    const subscriptions = config.subscriptions.filter((s) => s.id !== id)
+    if (subscriptions.length === config.subscriptions.length) { return false }
+    this.setWatcherConfig({ subscriptions })
+    return true
   }
 
   public setEntry(token: TokenEntry): void {

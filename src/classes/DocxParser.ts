@@ -72,7 +72,7 @@ export class DocxParser {
   }
 
   async process(documentId: string): Promise<string> {
-    const response = await this.client.withUser((lark, options) => lark.docx.documentBlock.list({
+    const response = await this.client.withAuth((lark, options) => lark.docx.documentBlock.list({
       path: { document_id: documentId }
     }, options))
     this.blocks = response.items as Block[] ?? []

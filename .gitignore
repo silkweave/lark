@@ -4,3 +4,4 @@ build/
 .npmrc
 lark.json
 output.md
+tsconfig.tsbuildinfo

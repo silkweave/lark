@@ -115,7 +115,7 @@ function parseNode(node: LarkBoardNode): BoardNode | undefined {
 export const parseBoard: BlockParseFn<BlockBoard> = async (block, { client }) => {
   async function loadBoardRetry(currentAttempt = 0): Promise<LarkBoardNode[]> {
     if (currentAttempt > 3) { throw new Error('Unable to parse board') }
-    const response = await client.withUser((lark, options) => lark.board.v1.whiteboardNode.list({
+    const response = await client.withAuth((lark, options) => lark.board.v1.whiteboardNode.list({
       path: { whiteboard_id: block.board.token }
     }, options))
     if (response.nodes) { return response.nodes as LarkBoardNode[] }

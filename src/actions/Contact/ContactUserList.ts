@@ -1,6 +1,7 @@
 import { createAction } from '@silkweave/core'
 import z from 'zod'
 import { TokenClient } from '../../classes/TokenClient.js'
+import { userIdSchema } from '../../lib/auth.js'
 
 export const ContactUserList = createAction({
   name: 'contactUserList',
@@ -10,11 +11,11 @@ export const ContactUserList = createAction({
     departmentId: z.string().optional().default('0').describe('Department ID ("0" for root/all users)'),
     pageSize: z.int().optional().describe('Number of results per page (max 50)'),
     pageToken: z.string().optional().describe('Pagination token for next page'),
-    userId: z.string().optional().default('default')
+    userId: userIdSchema()
   }),
   run: async ({ userId, departmentId, pageSize, pageToken }) => {
     const client = new TokenClient(userId)
-    return client.withUser((lark, options) => lark.contact.user.list({
+    return client.withAuth((lark, options) => lark.contact.user.list({
       params: {
         user_id_type: 'open_id',
         department_id: departmentId,

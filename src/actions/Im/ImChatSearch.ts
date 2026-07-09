@@ -1,6 +1,7 @@
 import { createAction } from '@silkweave/core'
 import z from 'zod'
 import { TokenClient } from '../../classes/TokenClient.js'
+import { userIdSchema } from '../../lib/auth.js'
 
 export const ImChatSearch = createAction({
   name: 'imChatSearch',
@@ -10,11 +11,11 @@ export const ImChatSearch = createAction({
     query: z.string().describe('Search keyword'),
     pageSize: z.int().optional().describe('Number of results per page'),
     pageToken: z.string().optional().describe('Pagination token for next page'),
-    userId: z.string().optional().default('default')
+    userId: userIdSchema()
   }),
   run: async ({ userId, query, pageSize, pageToken }) => {
     const client = new TokenClient(userId)
-    return client.withUser((lark, options) => lark.im.chat.search({
+    return client.withAuth((lark, options) => lark.im.chat.search({
       params: {
         user_id_type: 'open_id',
         query,

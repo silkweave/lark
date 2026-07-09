@@ -5,10 +5,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 - **Build:** `pnpm build` (uses tsdown, outputs to `build/`)
-- **Lint:** `pnpm lint` (runs eslint + tsc --noEmit)
+- **Lint:** `pnpm lint` (eslint) + `pnpm typecheck` (tsc --noEmit), or both via `pnpm check`
 - **Clean:** `pnpm clean`
 - **Run MCP server (dev):** `pnpm tsx src/mcp.ts`
 - **Run CLI (dev):** `pnpm tsx src/cli.ts`
+- **Run message watcher service (dev):** `pnpm serve` (standalone `lark-serve` entrypoint)
+
+pnpm v11 config (`overrides` for the zod pin, `onlyBuiltDependencies`) lives in `pnpm-workspace.yaml`, not package.json.
 
 ## Architecture
 
@@ -17,13 +20,15 @@ This is `@silkweave/lark` — a Lark/Feishu document parser that exposes both an
 ### Entry Points
 
 - `src/index.ts` — library exports (DocxParser, TokenClient, API helpers)
-- `src/mcp.ts` — MCP server (stdio transport via silkweave)
+- `src/mcp.ts` — MCP server (stdio transport via silkweave); auto-starts the message watcher when `watcher.autoStart` is set
 - `src/cli.ts` — CLI (same actions, cli transport via silkweave)
+- `src/serve.ts` — standalone message watcher service (`lark-serve` bin); keeps event subscriptions alive independently of any MCP client
 
 ### Core Classes
 
-- **`TokenClient`** — manages per-user OAuth tokens (read/write to `lark.json`). Provides `withUser()` helper that creates a Client with user access token auth. Used by actions for user-scoped API calls. Provides `withTenant()` helper that creates a Client with tenant access token auth. Used by actions for tenant-scoped API calls.
+- **`TokenClient`** — manages per-user OAuth tokens and the tenant token (read/write to `~/.silkweave-lark.json`). Constructed with a store key (`userId`); the sentinel key `'tenant'` (`TENANT_USER_ID`) selects the app's Tenant Access Token (bot identity). Actions call `withAuth()`, which dispatches to `withUser()` (user access token) or `withTenant()` (tenant access token) based on the key. The shared `userIdSchema()` helper in `src/lib/auth.ts` provides the zod input schema + agent-facing description for the `userId` parameter; `ImMessageSend`/`ImMessageReply` default it to `'tenant'`.
 - **`DocxParser`** — converts Lark document blocks to Markdown. Uses a block parser registry (`src/parser/`) where each block type (text, heading, list, table, callout, etc.) has a dedicated parse function.
+- **`MessageWatcher`** (`src/lib/messageWatcher.ts`, singleton `messageWatcher`) — receives `im.message.receive_v1` events over Lark's WebSocket long connection (no public URL). Matches events against subscriptions persisted in `~/.silkweave-lark.json` (re-read per event, so cross-process changes apply live), appends matches to `~/.silkweave-lark.events.jsonl`, and optionally spawns a detached `onEventCommand` per event with `LARK_*` env vars. A pidfile (`~/.silkweave-lark.watcher.pid`) prevents two watchers running at once. All watcher logging goes to stderr (stdout is the MCP protocol).
 
 ### Actions (`src/actions/`)
 
@@ -32,6 +37,7 @@ Actions are defined with `createAction()` from silkweave (zod schema for input, 
 - **Bitable** — Base apps, tables, fields, records (CRUD)
 - **Contact** — organization user listing
 - **Docx** — document export (to Markdown), import (from Markdown), block listing
+- **Event** — message subscriptions (create/list/delete), watcher lifecycle (start/stop/status), event log reading
 - **Im** — chat listing, search, message send/reply
 - **Wiki** — space listing, node listing, node details, node creation
 
@@ -53,7 +59,7 @@ DocxParser registers a parse function per `BlockType` enum value. Parsers receiv
 
 ## Lark App Credentials
 
-Initial call to AuthenAuthorize is required to set clientId and clientSecret. App Credentials and Token state are persisted in `lark.json` at the project root.
+Initial call to AuthenAuthorize is required to set clientId and clientSecret. App Credentials and Token state are persisted in `~/.silkweave-lark.json`.
 
 ## Testing via MCP
 
@@ -71,13 +77,12 @@ This is an unscoped public package. Publish with:
 pnpm publish --no-git-checks
 ```
 
-## Wrap-Up Flow
+## Wrapup Config
 
-When finishing a session or feature, follow this checklist:
-
-1. **Clean up**: Remove debug code, unused files, stale references
-2. **Update docs**: Update any documentation for important changes
-3. **Update CLAUDE.md**: Keep this file current with architectural changes
-4. **Commit**: Stage files, write descriptive commit message
-5. **Publish**: If releasing, bump version and `pnpm publish --no-git-checks`
-6. **Update memory**: Update `MEMORY.md` with stable patterns and key decisions from the session
+- check: `pnpm check` (run binaries directly or with `CI=true` — pnpm v11 prompts abort without a TTY)
+- test: skip (no test suite)
+- push: yes
+- version_bump: yes (single package)
+- publish: yes (public, `pnpm publish --no-git-checks`)
+- docs: root CLAUDE.md + README.md
+- frontend_smoke: no

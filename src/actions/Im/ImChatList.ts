@@ -1,6 +1,7 @@
 import { createAction } from '@silkweave/core'
 import z from 'zod'
 import { TokenClient } from '../../classes/TokenClient.js'
+import { userIdSchema } from '../../lib/auth.js'
 
 export const ImChatList = createAction({
   name: 'imChatList',
@@ -10,11 +11,11 @@ export const ImChatList = createAction({
     sortType: z.enum(['ByCreateTimeAsc', 'ByActiveTimeDesc']).optional().describe('Sort order'),
     pageSize: z.int().optional().describe('Number of results per page'),
     pageToken: z.string().optional().describe('Pagination token for next page'),
-    userId: z.string().optional().default('default')
+    userId: userIdSchema()
   }),
   run: async ({ userId, sortType, pageSize, pageToken }) => {
     const client = new TokenClient(userId)
-    return client.withUser((lark, options) => lark.im.chat.list({
+    return client.withAuth((lark, options) => lark.im.chat.list({
       params: {
         user_id_type: 'open_id',
         sort_type: sortType,

@@ -6,7 +6,7 @@ export const AuthenUserInfo = createAction({
   name: 'authenUserInfo',
   description: 'Get Authorized User Info',
   input: z.object({
-    userId: z.string().optional().default('default')
+    userId: z.string().optional().default('default').describe('Token store key of the authenticated user (user OAuth only — \'tenant\' is not valid here)')
   }),
   run: async ({ userId }) => {
     const client = new TokenClient(userId)

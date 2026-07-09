@@ -1,6 +1,7 @@
 import { createAction } from '@silkweave/core'
 import z from 'zod'
 import { TokenClient } from '../../classes/TokenClient.js'
+import { userIdSchema } from '../../lib/auth.js'
 
 export const WikiSpaceNodeCreate = createAction({
   name: 'wikiSpaceNodeCreate',
@@ -10,11 +11,11 @@ export const WikiSpaceNodeCreate = createAction({
     spaceId: z.string().describe('Wiki space ID'),
     parentNodeToken: z.string().optional().describe('Parent node token. Omit to create a top-level node.'),
     title: z.string().optional().describe('Document title'),
-    userId: z.string().optional().default('default')
+    userId: userIdSchema()
   }),
   run: async ({ userId, spaceId, parentNodeToken, title }) => {
     const client = new TokenClient(userId)
-    return client.withUser((lark, options) => lark.wiki.spaceNode.create({
+    return client.withAuth((lark, options) => lark.wiki.spaceNode.create({
       path: { space_id: spaceId },
       data: {
         obj_type: 'docx',

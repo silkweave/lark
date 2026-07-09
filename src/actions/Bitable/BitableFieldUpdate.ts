@@ -1,6 +1,7 @@
 import { createAction } from '@silkweave/core'
 import z from 'zod'
 import { TokenClient } from '../../classes/TokenClient.js'
+import { userIdSchema } from '../../lib/auth.js'
 
 export const BitableFieldUpdate = createAction({
   name: 'bitableFieldUpdate',
@@ -15,11 +16,11 @@ export const BitableFieldUpdate = createAction({
     uiType: z.string().optional().describe('UI type hint (e.g. Text, Number, Currency, Rating)'),
     property: z.string().optional().describe('Field property as JSON string (options for select fields, etc.)'),
     description: z.string().optional().describe('Field description'),
-    userId: z.string().optional().default('default')
+    userId: userIdSchema()
   }),
   run: async ({ userId, appToken, tableId, fieldId, fieldName, type, uiType, property, description }) => {
     const client = new TokenClient(userId)
-    return client.withUser((lark, options) => lark.bitable.appTableField.update({
+    return client.withAuth((lark, options) => lark.bitable.appTableField.update({
       path: { app_token: appToken, table_id: tableId, field_id: fieldId },
       data: {
         field_name: fieldName,

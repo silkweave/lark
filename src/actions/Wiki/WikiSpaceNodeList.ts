@@ -1,6 +1,7 @@
 import { createAction } from '@silkweave/core'
 import z from 'zod'
 import { TokenClient } from '../../classes/TokenClient.js'
+import { userIdSchema } from '../../lib/auth.js'
 
 export interface LarkNode {
   space_id?: string
@@ -13,12 +14,12 @@ export const WikiSpaceNodeList = createAction({
   description: 'List Wiki Space Nodes',
   args: ['userId'],
   input: z.object({
-    spaceId: z.string(),
-    pageSize: z.int().optional(),
-    pageToken: z.string().optional(),
-    parentNodeToken: z.string().optional(),
+    spaceId: z.string().describe('Wiki space ID'),
+    pageSize: z.int().optional().describe('Number of results per page'),
+    pageToken: z.string().optional().describe('Pagination token for next page'),
+    parentNodeToken: z.string().optional().describe('Filter to children of this node'),
     recursive: z.boolean().describe('Traverse the tree recursively').optional().default(false),
-    userId: z.string().optional().default('default')
+    userId: userIdSchema()
   }),
   run: async ({ userId, spaceId, pageSize, pageToken, parentNodeToken, recursive }) => {
     const client = new TokenClient(userId)
@@ -32,7 +33,7 @@ export const WikiSpaceNodeList = createAction({
     }
 
     async function fetchChildren(token?: string): Promise<LarkNode[]> {
-      const response = await client.withUser((lark, options) => lark.wiki.spaceNode.list({
+      const response = await client.withAuth((lark, options) => lark.wiki.spaceNode.list({
         path: { space_id: spaceId },
         params: { page_size: pageSize, page_token: pageToken, parent_node_token: token }
       }, options))
