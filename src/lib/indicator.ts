@@ -1,5 +1,5 @@
 import { TENANT_USER_ID, TokenClient } from '../classes/TokenClient.js'
-import { INDICATOR_ASSET_VERSION, INDICATOR_GIF_BASE64 } from './indicatorAsset.js'
+import { INDICATOR_ASSET_VERSION, INDICATOR_IMAGE_BASE64, INDICATOR_IMAGE_MIME } from './indicatorAsset.js'
 import { takePendingAckByUserMessage, takePendingAcks } from './pendingAcks.js'
 
 /**
@@ -72,13 +72,13 @@ export function buildReplyCard(text: string) {
   }
 }
 
-/** Upload the embedded spinner GIF once and cache its image_key in ~/.silkweave-lark.json, keyed by asset version. */
+/** Upload the embedded spinner animation once and cache its image_key in ~/.silkweave-lark.json, keyed by asset version. */
 async function ensureIndicatorImageKey(client: TokenClient): Promise<string | undefined> {
   const cached = client.getWatcherConfig().indicatorImage
   if (cached?.assetVersion === INDICATOR_ASSET_VERSION) { return cached.imageKey }
   const form = new FormData()
   form.append('image_type', 'message')
-  form.append('image', new Blob([Buffer.from(INDICATOR_GIF_BASE64, 'base64')], { type: 'image/gif' }), 'indicator.gif')
+  form.append('image', new Blob([Buffer.from(INDICATOR_IMAGE_BASE64, 'base64')], { type: INDICATOR_IMAGE_MIME }), 'indicator.webp')
   const response = await fetch(`${LARK_BASE}/im/v1/images`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${client.tenantToken}` },
