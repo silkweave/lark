@@ -27,8 +27,6 @@ export interface ReflexConfig {
   model?: string
   /** Text-only playbook/context injected into the reflex system prompt — rules, background, tone, anything the fast responder should know */
   playbook?: string
-  /** Emoji reaction key added instantly to the user's message to acknowledge receipt (default 'Typing') */
-  reactionEmoji?: string
   /** Number of recent chat history entries (any sender) to include as context for the classifier (default 15) */
   historyLimit?: number
 }
@@ -36,6 +34,8 @@ export interface ReflexConfig {
 export interface WatcherConfig {
   subscriptions: MessageSubscription[]
   reflex?: ReflexConfig
+  /** Upload-once cache for the processing-indicator spinner (see src/lib/indicator.ts) — re-uploaded when assetVersion changes */
+  indicatorImage?: { imageKey: string; assetVersion: string }
 }
 
 /** Who authored a history entry: a real chat member, the reflex fast-responder, or the delegated background agent */
@@ -97,7 +97,6 @@ export interface WatcherStatus {
   reflex?: {
     enabled: boolean
     model: string
-    reactionEmoji: string
     hasApiKey: boolean
     hasPlaybook: boolean
     counters: { trivial: number; task: number; ignored: number; failed: number }

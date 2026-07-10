@@ -6,12 +6,16 @@ import { MessageEventRecord, MessageSubscription, ReflexConfig, WatcherStatus } 
 import { ReflexInput, ReflexView, StreamReflexInfo, SubscriptionInput, SubscriptionPatch } from '../types/gateway.js'
 import { fetchLark } from './api.js'
 import { appendHistory, readHistory } from './history.js'
+import { resolveIndicatorCard, STALE_TEXT } from './indicator.js'
+import { listPendingAcks, takeStalePendingAcks } from './pendingAcks.js'
 import { runReflex } from './reflex.js'
 import { applySubscriptionPatch, GatewayError, GatewayHost, WatcherGateway } from './watcherGateway.js'
 import { clearWatcherStatus, EVENTS_PATH, HEARTBEAT_MS, isProcessAlive, PID_PATH, writeWatcherStatus } from './watcherStatus.js'
 
 export { EVENTS_PATH }
 const DISPATCH_HISTORY_LIMIT = 20
+/** Indicator cards whose workload never replied are resolved to a "no response" note after this long — a stale spinner is a lie. */
+const STALE_ACK_MS = 10 * 60 * 1000
 
 /** All SDK log output goes to stderr — stdout is reserved for the MCP stdio protocol */
 const stderrLogger = {
@@ -105,7 +109,10 @@ export class MessageWatcher implements GatewayHost {
     this.notRunningReason = undefined
     // Persist a heartbeat so any other process (MCP server, CLI) can report accurate status without owning the watcher.
     this.persistStatus()
-    this.heartbeat = setInterval(() => this.persistStatus(), HEARTBEAT_MS)
+    this.heartbeat = setInterval(() => {
+      this.persistStatus()
+      void this.sweepStaleAcks()
+    }, HEARTBEAT_MS)
     this.heartbeat.unref?.()
     return this.getStatus()
   }
@@ -188,7 +195,6 @@ export class MessageWatcher implements GatewayHost {
     if (input.apiKey !== undefined) { reflex.apiKey = input.apiKey }
     if (input.model !== undefined) { reflex.model = input.model }
     if (input.playbook !== undefined) { reflex.playbook = input.playbook }
-    if (input.reactionEmoji !== undefined) { reflex.reactionEmoji = input.reactionEmoji }
     if (input.historyLimit !== undefined) { reflex.historyLimit = input.historyLimit }
     if (reflex.enabled && !reflex.apiKey) {
       throw new GatewayError('conflict', 'Reflex cannot be enabled without an apiKey — pass one now or set it in a prior call')
@@ -216,10 +222,25 @@ export class MessageWatcher implements GatewayHost {
     return {
       enabled: reflex.enabled ?? false,
       model: reflex.model ?? 'claude-haiku-4-5',
-      reactionEmoji: reflex.reactionEmoji ?? 'Typing',
       hasApiKey: !!reflex.apiKey,
       hasPlaybook: !!reflex.playbook?.trim(),
       historyLimit: reflex.historyLimit ?? 15
+    }
+  }
+
+  /** Resolve indicator cards whose workload never replied (see src/lib/pendingAcks.ts). Best-effort, runs on the heartbeat. */
+  private async sweepStaleAcks() {
+    try {
+      const cutoff = Date.now() - STALE_ACK_MS
+      if (!listPendingAcks().some((a) => new Date(a.createdAt).getTime() <= cutoff)) { return }
+      const client = new TokenClient(TENANT_USER_ID)
+      await client.assertValidTenantToken()
+      for (const ack of takeStalePendingAcks(STALE_ACK_MS)) {
+        await resolveIndicatorCard(client, ack.ackMessageId, STALE_TEXT)
+        stderrLogger.warn(`Resolved stale indicator card ${ack.ackMessageId} in ${ack.chatId} (no reply within ${STALE_ACK_MS / 60000}m)`)
+      }
+    } catch (error) {
+      stderrLogger.error('Stale-ack sweep failed:', (error as Error).message)
     }
   }
 
@@ -273,7 +294,6 @@ export class MessageWatcher implements GatewayHost {
       reflex: reflex ? {
         enabled: reflex.enabled ?? false,
         model: reflex.model ?? 'claude-haiku-4-5',
-        reactionEmoji: reflex.reactionEmoji ?? 'Typing',
         hasApiKey: !!reflex.apiKey,
         hasPlaybook: !!reflex.playbook?.trim(),
         counters: { ...this.reflexCounters }
@@ -347,7 +367,7 @@ export class MessageWatcher implements GatewayHost {
         const outcome = await runReflex(record, reflex, this.botName ?? 'the bot')
         if (outcome.category === 'trivial') { this.reflexCounters.trivial++ } else if (outcome.category === 'task') { this.reflexCounters.task++ } else if (outcome.category === 'ignore') { this.reflexCounters.ignored++ } else { this.reflexCounters.failed++ }
         if (outcome.category) {
-          reflexInfo = { category: outcome.category, replied: !!outcome.replied, replyText: outcome.replyText, dispatched: outcome.dispatch }
+          reflexInfo = { category: outcome.category, replied: !!outcome.replied, replyText: outcome.replyText, dispatched: outcome.dispatch, ackMessageId: outcome.ackMessageId }
         }
         if (outcome.replied && outcome.replyMessageId) {
           appendHistory({
@@ -361,7 +381,7 @@ export class MessageWatcher implements GatewayHost {
             createTime: String(Date.now())
           })
         }
-        if (outcome.dispatch) { this.dispatchMatched(matched, record) }
+        if (outcome.dispatch) { this.dispatchMatched(matched, record, outcome.ackMessageId) }
       } else {
         this.dispatchMatched(matched, record)
       }
@@ -376,15 +396,15 @@ export class MessageWatcher implements GatewayHost {
     }
   }
 
-  private dispatchMatched(matched: MessageSubscription[], record: MessageEventRecord) {
+  private dispatchMatched(matched: MessageSubscription[], record: MessageEventRecord, ackMessageId?: string) {
     for (const subscription of matched) {
-      if (subscription.onEventCommand) { this.dispatchCommand(subscription, record) }
-      if (subscription.webhookUrl) { this.dispatchWebhook(subscription, record) }
+      if (subscription.onEventCommand) { this.dispatchCommand(subscription, record, ackMessageId) }
+      if (subscription.webhookUrl) { this.dispatchWebhook(subscription, record, ackMessageId) }
     }
   }
 
   /** POST the event + recent history to the subscription's webhook. Fire-and-forget from the caller's perspective — errors are counted, never thrown. */
-  private async dispatchWebhook(subscription: MessageSubscription, record: MessageEventRecord) {
+  private async dispatchWebhook(subscription: MessageSubscription, record: MessageEventRecord, ackMessageId?: string) {
     try {
       const history = readHistory(record.chatId, DISPATCH_HISTORY_LIMIT).filter((e) => e.messageId !== record.messageId)
       const headers: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -392,7 +412,7 @@ export class MessageWatcher implements GatewayHost {
       const response = await fetch(subscription.webhookUrl!, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ subscriptionId: subscription.id, event: record, history }),
+        body: JSON.stringify({ subscriptionId: subscription.id, event: record, history, ackMessageId }),
         signal: AbortSignal.timeout(10000)
       })
       if (!response.ok) { throw new Error(`webhook responded ${response.status}`) }
@@ -427,7 +447,7 @@ export class MessageWatcher implements GatewayHost {
     return true
   }
 
-  private dispatchCommand(subscription: MessageSubscription, record: MessageEventRecord) {
+  private dispatchCommand(subscription: MessageSubscription, record: MessageEventRecord, ackMessageId?: string) {
     try {
       const history = readHistory(record.chatId, DISPATCH_HISTORY_LIMIT).filter((e) => e.messageId !== record.messageId)
       const child = spawn(subscription.onEventCommand!, {
@@ -444,7 +464,8 @@ export class MessageWatcher implements GatewayHost {
           LARK_MESSAGE_TYPE: record.messageType,
           LARK_TEXT: record.text,
           LARK_SENDER_OPEN_ID: record.senderOpenId ?? '',
-          LARK_MENTIONED_BOT: String(record.mentionedBot)
+          LARK_MENTIONED_BOT: String(record.mentionedBot),
+          LARK_ACK_MESSAGE_ID: ackMessageId ?? ''
         }
       })
       child.unref()

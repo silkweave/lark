@@ -1,11 +1,12 @@
 import { TENANT_USER_ID, TokenClient } from '../classes/TokenClient.js'
 import { HistoryEntry, MessageEventRecord, ReflexConfig } from '../types/events.js'
 import { formatHistory, readHistory } from './history.js'
+import { IGNORED_TEXT, patchIndicatorCard, resolveIndicatorCard, sendIndicatorCard } from './indicator.js'
+import { addPendingAck } from './pendingAcks.js'
 
 const LARK_BASE = 'https://open.larksuite.com/open-apis'
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
 const DEFAULT_MODEL = 'claude-haiku-4-5'
-const DEFAULT_EMOJI = 'Typing'
 const DEFAULT_HISTORY_LIMIT = 15
 
 /** Reflex logging goes to stderr — stdout is reserved for the MCP stdio protocol */
@@ -24,6 +25,8 @@ export interface ReflexOutcome {
   /** message_id of the reflex's own reply, if one was sent — used to record it in the shared history log */
   replyMessageId?: string
   replyText?: string
+  /** message_id of the processing-indicator card left in the chat (dispatched tasks only) — morphed into the real reply once it lands */
+  ackMessageId?: string
 }
 
 interface ClassifyResult {
@@ -54,28 +57,6 @@ async function larkFetch(token: string, method: string, path: string, body?: unk
     body: body ? JSON.stringify(body) : undefined
   })
   return await response.json() as LarkResult
-}
-
-/** Add an emoji reaction to the user's message as an instant, zero-model acknowledgement. Best-effort. */
-async function addReaction(token: string, messageId: string, emoji: string): Promise<string | undefined> {
-  try {
-    const result = await larkFetch(token, 'POST', `/im/v1/messages/${messageId}/reactions`, { reaction_type: { emoji_type: emoji } })
-    if (result.code !== 0) { log.error(`reaction failed (${emoji}):`, result.msg ?? JSON.stringify(result)); return undefined }
-    const reactionId = result.data?.reaction_id
-    return typeof reactionId === 'string' ? reactionId : undefined
-  } catch (error) {
-    log.error('reaction error:', (error as Error).message)
-    return undefined
-  }
-}
-
-/** Remove a previously-added reaction (used when a mention turns out to be a mistaken/passing mention). Best-effort. */
-async function removeReaction(token: string, messageId: string, reactionId: string): Promise<void> {
-  try {
-    await larkFetch(token, 'DELETE', `/im/v1/messages/${messageId}/reactions/${reactionId}`)
-  } catch (error) {
-    log.error('reaction removal error:', (error as Error).message)
-  }
 }
 
 /** Reply to the user's message as the bot (tenant identity). Best-effort. */
@@ -180,15 +161,18 @@ async function classify(apiKey: string, model: string, botName: string, playbook
 
 /**
  * Reflex fast-response flow for a message addressed to the bot.
- * 1. Instantly react (zero-model "seen it") while the classifier runs in parallel.
- * 2. Classify via Haiku: trivial → answer inline; task → ack + let the caller spawn the heavy workload; ignore → say nothing (remove the reaction).
- * On any failure it falls back safe: dispatch = true, so the heavy workload still runs and the message is never silently dropped.
+ * 1. Instantly reply with the processing-indicator card (zero-model "seen it") while the classifier runs in parallel.
+ * 2. Classify via Haiku: trivial → the card morphs into the answer; task → the card's text is patched to the
+ *    classifier's acknowledgement and registered as a pending ack (morphed into the real reply when it lands),
+ *    and the caller spawns the heavy workload; ignore → the card morphs into a minimal "👍" note.
+ * The card is never recalled (Lark shows a "recalled a message" tombstone) — it is always patched into a final state.
+ * On any failure it falls back safe: dispatch = true with the card left pending, so the heavy workload still runs
+ * and the message is never silently dropped.
  */
 export async function runReflex(record: MessageEventRecord, config: ReflexConfig, botName: string): Promise<ReflexOutcome> {
   const apiKey = config.apiKey
   if (!apiKey) { log.error('No Anthropic API key configured — falling back to normal dispatch'); return { dispatch: true } }
   const model = config.model || DEFAULT_MODEL
-  const emoji = config.reactionEmoji || DEFAULT_EMOJI
   const historyLimit = config.historyLimit ?? DEFAULT_HISTORY_LIMIT
   const history = readHistory(record.chatId, historyLimit).filter((e) => e.messageId !== record.messageId)
 
@@ -202,23 +186,45 @@ export async function runReflex(record: MessageEventRecord, config: ReflexConfig
   const token = client.tenantToken
   if (!token) { return { dispatch: true } }
 
-  // Instant acknowledgement reaction runs concurrently with the classification.
-  const reactionPromise = addReaction(token, record.messageId, emoji)
+  // Instant acknowledgement card runs concurrently with the classification.
+  const cardPromise = sendIndicatorCard(client, record.messageId)
   const result = await classify(apiKey, model, botName, config.playbook, record, history)
-  const reactionId = await reactionPromise
+  const ackMessageId = await cardPromise
+
+  const keepCardPending = () => {
+    if (!ackMessageId) { return }
+    addPendingAck({ chatId: record.chatId, userMessageId: record.messageId, ackMessageId, createdAt: new Date().toISOString() })
+  }
 
   if (!result) {
     // Classification failed — fail safe by running the heavy workload rather than dropping the message.
-    return { dispatch: true }
+    keepCardPending()
+    return { dispatch: true, ackMessageId }
   }
 
   if (result.category === 'ignore') {
-    if (reactionId) { await removeReaction(token, record.messageId, reactionId) }
+    if (ackMessageId) { await resolveIndicatorCard(client, ackMessageId, IGNORED_TEXT) }
     return { dispatch: false, category: 'ignore' }
   }
 
-  const text = result.reply.trim() || (result.category === 'task' ? 'Got it — working on this now.' : '')
-  const replyMessageId = text ? await replyText(token, record.messageId, text) : undefined
+  if (result.category === 'trivial') {
+    const text = result.reply.trim()
+    if (!text) {
+      if (ackMessageId) { await resolveIndicatorCard(client, ackMessageId, IGNORED_TEXT) }
+      return { dispatch: false, category: 'trivial', replied: false }
+    }
+    // The card morphs into the answer; only send a separate reply when there is no card to morph.
+    if (ackMessageId && await resolveIndicatorCard(client, ackMessageId, text, 'reply')) {
+      return { dispatch: false, category: 'trivial', replied: true, replyMessageId: ackMessageId, replyText: text }
+    }
+    const replyMessageId = await replyText(token, record.messageId, text)
+    return { dispatch: false, category: 'trivial', replied: !!replyMessageId, replyMessageId, replyText: text }
+  }
 
-  return { dispatch: result.category === 'task', category: result.category, replied: !!replyMessageId, replyMessageId, replyText: text }
+  // task: the card *is* the acknowledgement — personalize its text with the classifier's reply and leave it in
+  // the chat until the real reply morphs it (resolveIndicatorWithReply / clearPendingIndicators / stale sweep).
+  const ack = result.reply.trim()
+  if (ackMessageId && ack) { await patchIndicatorCard(client, ackMessageId, ack) }
+  keepCardPending()
+  return { dispatch: true, category: 'task', ackMessageId }
 }

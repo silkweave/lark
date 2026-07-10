@@ -120,7 +120,6 @@ export function readWatcherStatus(): WatcherStatus {
     reflex: reflexConfig ? {
       enabled: reflexConfig.enabled ?? false,
       model: reflexConfig.model ?? 'claude-haiku-4-5',
-      reactionEmoji: reflexConfig.reactionEmoji ?? 'Typing',
       hasApiKey: !!reflexConfig.apiKey,
       hasPlaybook: !!reflexConfig.playbook?.trim(),
       counters: file?.reflexCounters ?? { trivial: 0, task: 0, ignored: 0, failed: 0 }

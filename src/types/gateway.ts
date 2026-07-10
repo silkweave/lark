@@ -106,7 +106,6 @@ export interface ReflexInput {
   apiKey?: string
   model?: string
   playbook?: string
-  reactionEmoji?: string
   historyLimit?: number
 }
 
@@ -114,7 +113,6 @@ export interface ReflexInput {
 export interface ReflexView {
   enabled: boolean
   model: string
-  reactionEmoji: string
   hasApiKey: boolean
   hasPlaybook: boolean
   historyLimit: number
@@ -146,6 +144,8 @@ export interface StreamReflexInfo {
   replyText?: string
   /** Whether the heavy workload (onEventCommand/webhook) was dispatched for this event */
   dispatched: boolean
+  /** message_id of the processing-indicator card left in the chat for a dispatched task — morphed into the bot's real reply once it lands */
+  ackMessageId?: string
 }
 
 export interface StreamMessagePayload {

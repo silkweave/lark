@@ -3,6 +3,7 @@ import z from 'zod'
 import { TokenClient } from '../../classes/TokenClient.js'
 import { userIdSchema } from '../../lib/auth.js'
 import { appendHistory } from '../../lib/history.js'
+import { clearPendingIndicators } from '../../lib/indicator.js'
 
 export const ImMessageSend = createAction({
   name: 'imMessageSend',
@@ -30,6 +31,8 @@ export const ImMessageSend = createAction({
         try { text = JSON.parse(content).text ?? content } catch { /* keep raw content */ }
       }
       appendHistory({ chatId, messageId, role: 'agent', text, createTime: String(Date.now()) })
+      // The bot's real reply has landed — resolve any indicator cards still pending in this chat to a "done" note.
+      await clearPendingIndicators(chatId)
     }
     return result
   }

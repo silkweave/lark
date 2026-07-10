@@ -204,7 +204,7 @@ lark-listen --chat oc_xxx --history 20
 lark-listen --since 2026-07-10T00:00:00Z   # replay matched events first, then go live
 ```
 
-Each line is `{ event, history?, reflex? }` — `reflex` carries the fast-responder's outcome (`category`, `replied`, `replyText`, `dispatched`) so a downstream agent knows what was already said. The client auto-reconnects with exponential backoff and re-subscribes from the last-seen event (`sinceTs` replay from `events.jsonl`), making matched-event delivery gap-free across watcher restarts. Slow consumers are disconnected with an `overflow` frame and catch up the same way. Programmatic use: `streamEvents(filter, onEvent)` from the library (`import { streamEvents } from '@silkweave/lark'`).
+Each line is `{ event, history?, reflex? }` — `reflex` carries the fast-responder's outcome (`category`, `replied`, `replyText`, `dispatched`, `ackMessageId`) so a downstream agent knows what was already said. The client auto-reconnects with exponential backoff and re-subscribes from the last-seen event (`sinceTs` replay from `events.jsonl`), making matched-event delivery gap-free across watcher restarts. Slow consumers are disconnected with an `overflow` frame and catch up the same way. Programmatic use: `streamEvents(filter, onEvent)` from the library (`import { streamEvents } from '@silkweave/lark'`).
 
 ### Reading events
 

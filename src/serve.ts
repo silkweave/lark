@@ -14,7 +14,6 @@ Reflex options (all optional; persisted to ~/.silkweave-lark.json):
   --model <id>                  Anthropic model for the reflex (default claude-haiku-4-5)
   --playbook <file>             Load reflex playbook/context from a text file
   --playbook-text <text>        Set the reflex playbook/context inline
-  --emoji <key>                 Lark emoji key for the instant reaction (default Typing)
   --history-limit <n>           Recent chat messages to include as reflex context (default 15)
   -h, --help                    Show this help`
 
@@ -30,7 +29,6 @@ function parseArgs(argv: string[]): { reflex: Partial<ReflexConfig>; help: boole
       case '--no-reflex': case '--disable-reflex': reflex.enabled = false; break
       case '--api-key': reflex.apiKey = next(); break
       case '--model': reflex.model = next(); break
-      case '--emoji': reflex.reactionEmoji = next(); break
       case '--history-limit': reflex.historyLimit = Number(next()); break
       case '--playbook-text': reflex.playbook = next(); break
       case '--playbook': {
