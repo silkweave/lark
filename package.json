@@ -62,7 +62,6 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@modelcontextprotocol/inspector": "^0.21.1",
     "@stylistic/eslint-plugin": "^5.10.0",
     "@types/node": "^22.0.0",
     "eslint": "^10.6.0",
