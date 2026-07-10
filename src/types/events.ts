@@ -48,6 +48,22 @@ export interface WatcherConfig {
   indicatorImage?: { imageKey: string; assetVersion: string }
 }
 
+/** A message resource sideloaded to local disk by the watcher (see src/lib/attachments.ts) */
+export interface MessageAttachment {
+  /** Lark resource key (image_key or file_key) */
+  key: string
+  /** Lark resource kind, matching the download endpoint's `type` param — videos/audio download as 'file' */
+  type: 'image' | 'file'
+  /** File name of the sideloaded copy (original name where the message carried one) */
+  name: string
+  /** Absolute local path of the sideloaded copy — agents can read this directly */
+  path: string
+  /** Size in bytes of the sideloaded copy */
+  size: number
+  /** Content-Type reported by Lark's download endpoint */
+  mimeType?: string
+}
+
 /** Who authored a history entry: a real chat member, the reflex fast-responder, or the delegated background agent */
 export type HistoryRole = 'user' | 'reflex' | 'agent'
 
@@ -65,6 +81,8 @@ export interface HistoryEntry {
   text: string
   /** Epoch milliseconds as a string, consistent with Lark's message create_time */
   createTime: string
+  /** Resources sideloaded from this message, when it carried any (see src/lib/attachments.ts) */
+  attachments?: MessageAttachment[]
 }
 
 export interface MessageEventRecord {
@@ -85,6 +103,8 @@ export interface MessageEventRecord {
   mentionedBot: boolean
   mentions: { name: string; openId?: string }[]
   createTime: string
+  /** Resources (images/files/media) sideloaded to local disk for this message, when it carried any */
+  attachments?: MessageAttachment[]
 }
 
 export interface WatcherStatus {

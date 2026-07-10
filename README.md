@@ -133,7 +133,7 @@ In the [Lark developer console](https://open.larksuite.com/):
 
 1. **Events & Callbacks → Event Configuration**: select **Long Connection** mode
 2. **Add the event** `im.message.receive_v1` ("Receive messages")
-3. **Permissions**: enable the message-receiving scopes you need — `im:message.p2p_msg` (direct messages), `im:message.group_at_msg` (group messages that @-mention the bot) and/or `im:message.group_msg` (all group messages)
+3. **Permissions**: enable the message-receiving scopes you need — `im:message.p2p_msg` (direct messages), `im:message.group_at_msg` (group messages that @-mention the bot) and/or `im:message.group_msg` (all group messages). Add `im:resource` if you want the watcher to sideload message attachments (images/files) for agents.
 4. Add the bot to the group chats you want to observe, then publish a new app version
 
 ### Creating subscriptions
@@ -142,7 +142,7 @@ In the [Lark developer console](https://open.larksuite.com/):
 EventSubscriptionCreate { "chatId": "oc_xxx", "mentionBot": true }
 ```
 
-Filters are optional and combine with AND: `chatId` (specific chat), `mentionBot` (only @-mentions of the bot), `keywords` (case-insensitive match). Omit all filters to record every message the bot receives. `onEventCommand` spawns a detached shell command per matching message with `LARK_*` env vars (`LARK_EVENT_JSON`, `LARK_HISTORY_JSON`, `LARK_CHAT_ID`, `LARK_TEXT`, `LARK_MESSAGE_ID`, `LARK_SENDER_OPEN_ID`, `LARK_MENTIONED_BOT`, `LARK_SUBSCRIPTION_ID`) — use it to notify or kick off an agent. `webhookUrl` instead POSTs `{ subscriptionId, event, history }` to a persistent listener (optionally signed via `webhookSecret`).
+Filters are optional and combine with AND: `chatId` (specific chat), `mentionBot` (only @-mentions of the bot), `keywords` (case-insensitive match). Omit all filters to record every message the bot receives. `onEventCommand` spawns a detached shell command per matching message with `LARK_*` env vars (`LARK_EVENT_JSON`, `LARK_HISTORY_JSON`, `LARK_ATTACHMENTS_JSON`, `LARK_CHAT_ID`, `LARK_TEXT`, `LARK_MESSAGE_ID`, `LARK_SENDER_OPEN_ID`, `LARK_MENTIONED_BOT`, `LARK_SUBSCRIPTION_ID`, `LARK_ACK_MESSAGE_ID`) — use it to notify or kick off an agent. `webhookUrl` instead POSTs `{ subscriptionId, event, history, ackMessageId? }` to a persistent listener (optionally signed via `webhookSecret`) — see [docs/AUTOMATION_WEBHOOK.md](docs/AUTOMATION_WEBHOOK.md) for wiring an automation platform (e.g. `claude -p` runs) behind that endpoint.
 
 Subscription CRUD (`EventSubscriptionCreate` / `EventSubscriptionUpdate` / `EventSubscriptionDelete`) and reflex config (`EventReflexConfigure`) are applied **live on the running watcher** over its control gateway and persisted to `~/.silkweave-lark.json` — no restart, id-stable updates, safe under concurrent MCP agents. These mutations require the watcher to be running; `EventSubscriptionList` and `EventWatchStatus` fall back to file reads when it isn't.
 
@@ -209,6 +209,10 @@ Each line is `{ event, history?, reflex? }` — `reflex` carries the fast-respon
 ### Reading events
 
 `EventList` returns collected events (filter by `chatId`, `subscriptionId`, `mentionedBot`, `since`). Each event includes the extracted plain `text` (mention placeholders resolved), raw `content` JSON, sender, chat, and mention metadata — everything needed to reply via `ImMessageReply` with `messageId`.
+
+### Attachments
+
+When an inbound message carries resources — an `image`, `file`, `media` (video) or `audio` message, or images embedded in a rich-text `post` — the watcher **sideloads** them: each resource is downloaded (requires the `im:resource` app permission) to `~/.silkweave-lark.attachments/<messageId>/` and referenced as `attachments: [{ key, type, name, path, size, mimeType }]` on the event record, the webhook payload, `LARK_ATTACHMENTS_JSON`, and the shared history log (so a delegated agent sees an image sent *before* the follow-up question, e.g. a photo of a cat followed by "what animal is this?" — it just reads the local `path`). Sideloading happens for any message in a chat covered by at least one subscription; the extracted `text` for attachment messages is a readable placeholder (`[image]`, `[file: report.pdf]`, …) and `post` messages are rendered as plain text with inline placeholders. Sideloaded copies are working files, not an archive: the watcher sweeps per-message directories older than 7 days.
 
 ## Tools Reference
 

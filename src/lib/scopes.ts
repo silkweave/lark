@@ -27,6 +27,7 @@ export const scopes = [
   'im:chat:read',
   'im:chat:readonly',
   'im:message',
+  'im:resource',
   'offline_access',
   'sheets:spreadsheet',
   'space:document.event:read',

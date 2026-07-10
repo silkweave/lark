@@ -2,9 +2,10 @@ import { Domain, EventDispatcher, LoggerLevel, WSClient } from '@larksuiteoapi/n
 import { spawn } from 'child_process'
 import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { TENANT_USER_ID, TokenClient } from '../classes/TokenClient.js'
-import { MessageEventRecord, MessageSubscription, ReflexConfig, WatcherStatus } from '../types/events.js'
+import { MessageAttachment, MessageEventRecord, MessageSubscription, ReflexConfig, WatcherStatus } from '../types/events.js'
 import { ReflexInput, ReflexView, StreamReflexInfo, SubscriptionInput, SubscriptionPatch } from '../types/gateway.js'
 import { fetchLark } from './api.js'
+import { ATTACHMENT_SWEEP_INTERVAL_MS, AttachmentRef, extractAttachmentRefs, extractMessageText, sideloadAttachments, sweepAttachments } from './attachments.js'
 import { appendHistory, readHistory } from './history.js'
 import { resolveIndicatorCard, STALE_TEXT } from './indicator.js'
 import { listPendingAcks, takeStalePendingAcks } from './pendingAcks.js'
@@ -49,19 +50,6 @@ function readExternalPid(): number | undefined {
   return pid
 }
 
-function extractText(message: MessageEvent['message']): string {
-  try {
-    const content = JSON.parse(message.content)
-    let text: string = typeof content.text === 'string' ? content.text : JSON.stringify(content)
-    for (const mention of message.mentions ?? []) {
-      text = text.replaceAll(mention.key, `@${mention.name}`)
-    }
-    return text
-  } catch {
-    return message.content
-  }
-}
-
 export class MessageWatcher implements GatewayHost {
   private ws?: WSClient
   private gateway?: WatcherGateway
@@ -78,6 +66,7 @@ export class MessageWatcher implements GatewayHost {
   private lastError?: string
   private notRunningReason?: string
   private heartbeat?: ReturnType<typeof setInterval>
+  private lastAttachmentSweep = 0
 
   public async start(): Promise<WatcherStatus> {
     if (this.running) { throw new Error('Message watcher is already running in this process') }
@@ -112,6 +101,15 @@ export class MessageWatcher implements GatewayHost {
     this.heartbeat = setInterval(() => {
       this.persistStatus()
       void this.sweepStaleAcks()
+      if (Date.now() - this.lastAttachmentSweep >= ATTACHMENT_SWEEP_INTERVAL_MS) {
+        this.lastAttachmentSweep = Date.now()
+        try {
+          const removed = sweepAttachments()
+          if (removed) { stderrLogger.info(`Swept ${removed} expired attachment director${removed === 1 ? 'y' : 'ies'}`) }
+        } catch (error) {
+          stderrLogger.error('Attachment sweep failed:', (error as Error).message)
+        }
+      }
     }, HEARTBEAT_MS)
     this.heartbeat.unref?.()
     return this.getStatus()
@@ -309,11 +307,18 @@ export class MessageWatcher implements GatewayHost {
       if (this.processed.has(message.message_id)) { return }
       if (this.processed.size > 10000) { this.processed.clear() }
       this.processed.add(message.message_id)
-      const text = extractText(message)
+      const text = extractMessageText(message.message_type, message.content, message.mentions ?? [])
       const mentions = message.mentions ?? []
       const mentionedBot = mentions.some((m) =>
         (this.botOpenId && m.id?.open_id === this.botOpenId) || (this.botName && m.name === this.botName)
       )
+      // Re-read subscriptions on every event so changes made by other processes (e.g. the MCP server) apply live
+      const config = new TokenClient(TENANT_USER_ID).getWatcherConfig()
+      // Sideload attachments whenever any subscription covers this chat (ignoring mention/keyword gates), so an
+      // image sent before the follow-up question is already on disk and referenced in history when dispatch happens.
+      const refs = extractAttachmentRefs(message.message_type, message.content)
+      const chatCovered = config.subscriptions.some((s) => !s.chatId || s.chatId === message.chat_id)
+      const attachments = refs.length && chatCovered ? await this.sideload(message.message_id, refs) : undefined
       // Record every message seen (regardless of subscription match) so chat context is complete for reflex/agent history
       appendHistory({
         chatId: message.chat_id,
@@ -324,10 +329,9 @@ export class MessageWatcher implements GatewayHost {
         role: 'user',
         senderOpenId: data.sender.sender_id?.open_id,
         text,
-        createTime: message.create_time
+        createTime: message.create_time,
+        attachments
       })
-      // Re-read subscriptions on every event so changes made by other processes (e.g. the MCP server) apply live
-      const config = new TokenClient(TENANT_USER_ID).getWatcherConfig()
       const matched = config.subscriptions.filter((s) => this.matches(s, message.chat_id, mentionedBot, text))
       const record: MessageEventRecord = {
         receivedAt: new Date().toISOString(),
@@ -344,7 +348,8 @@ export class MessageWatcher implements GatewayHost {
         senderType: data.sender.sender_type,
         mentionedBot,
         mentions: mentions.map((m) => ({ name: m.name, openId: m.id?.open_id })),
-        createTime: message.create_time
+        createTime: message.create_time,
+        attachments
       }
       if (!matched.length) {
         // Not persisted, but still fanned out to `deliver: 'all'` streams (full-transcript consumers).
@@ -366,7 +371,9 @@ export class MessageWatcher implements GatewayHost {
       const senderOpenId = data.sender.sender_id?.open_id
       const fromUser = data.sender.sender_type === 'user' && (!this.botOpenId || senderOpenId !== this.botOpenId)
       let reflexInfo: StreamReflexInfo | undefined
-      if (reflex?.enabled && engaged && message.message_type === 'text' && fromUser) {
+      // 'post' (rich text) is included: it is how Lark delivers image+text in one message, and extractMessageText
+      // renders it as classifiable text with inline attachment placeholders.
+      if (reflex?.enabled && engaged && (message.message_type === 'text' || message.message_type === 'post') && fromUser) {
         const outcome = await runReflex(record, reflex, this.botName ?? 'the bot')
         if (outcome.category === 'trivial') { this.reflexCounters.trivial++ } else if (outcome.category === 'task') { this.reflexCounters.task++ } else if (outcome.category === 'ignore') { this.reflexCounters.ignored++ } else { this.reflexCounters.failed++ }
         if (outcome.category) {
@@ -396,6 +403,20 @@ export class MessageWatcher implements GatewayHost {
       stderrLogger.error('Failed to handle message event:', this.lastError)
     } finally {
       this.persistStatus()
+    }
+  }
+
+  /** Download a message's resources to local disk (see src/lib/attachments.ts). Best-effort — a failure never blocks message handling. */
+  private async sideload(messageId: string, refs: AttachmentRef[]): Promise<MessageAttachment[] | undefined> {
+    try {
+      const client = new TokenClient(TENANT_USER_ID)
+      await client.assertValidTenantToken()
+      if (!client.tenantToken) { return undefined }
+      const attachments = await sideloadAttachments(client.tenantToken, messageId, refs)
+      return attachments.length ? attachments : undefined
+    } catch (error) {
+      stderrLogger.error('Attachment sideload failed:', (error as Error).message)
+      return undefined
     }
   }
 
@@ -477,7 +498,8 @@ export class MessageWatcher implements GatewayHost {
           LARK_TEXT: record.text,
           LARK_SENDER_OPEN_ID: record.senderOpenId ?? '',
           LARK_MENTIONED_BOT: String(record.mentionedBot),
-          LARK_ACK_MESSAGE_ID: ackMessageId ?? ''
+          LARK_ACK_MESSAGE_ID: ackMessageId ?? '',
+          LARK_ATTACHMENTS_JSON: JSON.stringify(record.attachments ?? [])
         }
       })
       child.unref()

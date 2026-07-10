@@ -52,6 +52,7 @@ export function formatHistory(entries: HistoryEntry[]): string {
     const who = e.role === 'user' ? `user:${e.senderOpenId ?? 'unknown'}` : e.role
     const parent = e.parentId ? byId.get(e.parentId) : undefined
     const replyNote = parent ? ` (replying to "${parent.text.slice(0, 60)}")` : ''
-    return `[${new Date(Number(e.createTime)).toISOString()}] ${who}${replyNote}: ${e.text}`
+    const attachmentNote = e.attachments?.length ? ` [attached: ${e.attachments.map((a) => a.path).join(', ')}]` : ''
+    return `[${new Date(Number(e.createTime)).toISOString()}] ${who}${replyNote}: ${e.text}${attachmentNote}`
   }).join('\n')
 }

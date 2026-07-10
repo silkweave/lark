@@ -107,6 +107,9 @@ function buildUserContent(record: MessageEventRecord, history: HistoryEntry[]): 
       formatHistory(history)
     )
   }
+  if (record.attachments?.length) {
+    lines.push(`Attached files (already downloaded for the background worker): ${record.attachments.map((a) => a.name).join(', ')} — you cannot see their contents, so anything that requires reading them is a "task".`)
+  }
   lines.push('', 'Latest message to classify:', record.text)
   return lines.join('\n')
 }
