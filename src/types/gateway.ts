@@ -1,4 +1,4 @@
-import { HistoryEntry, MessageEventRecord, MessageSubscription, WatcherStatus } from './events.js'
+import { HistoryEntry, MessageEventRecord, MessageSubscription, ReflexTrigger, WatcherStatus } from './events.js'
 
 /** Protocol version carried in every frame; the server rejects unknown versions with `unsupported_version`. */
 export const GATEWAY_VERSION = 1
@@ -87,6 +87,7 @@ export interface SubscriptionInput {
   onEventCommand?: string
   webhookUrl?: string
   webhookSecret?: string
+  reflexTrigger?: ReflexTrigger
 }
 
 /** Patch semantics: field present & non-null → set; `null` → clear the optional field; omitted → unchanged. */
@@ -98,6 +99,7 @@ export interface SubscriptionPatch {
   onEventCommand?: string | null
   webhookUrl?: string | null
   webhookSecret?: string | null
+  reflexTrigger?: ReflexTrigger | null
 }
 
 /** `apiKey: ''` / `playbook: ''` clear the respective field (matches EventReflexConfigure semantics). */

@@ -14,7 +14,11 @@ export const EventSubscriptionUpdate = createAction({
     keywords: z.array(z.string()).nullable().optional().describe('Only match messages containing at least one of these keywords; null clears'),
     onEventCommand: z.string().nullable().optional().describe('Shell command spawned per matching message; null clears'),
     webhookUrl: z.string().nullable().optional().describe('URL POSTed per matching message; null clears'),
-    webhookSecret: z.string().nullable().optional().describe('X-Silkweave-Signature header value for webhook requests; null clears')
+    webhookSecret: z.string().nullable().optional().describe('X-Silkweave-Signature header value for webhook requests; null clears'),
+    reflexTrigger: z.object({
+      alwaysEngage: z.boolean().optional().describe('Engage the reflex fast-responder on every message this subscription matches, without requiring an @-mention'),
+      keywords: z.array(z.string()).optional().describe('Engage the reflex (without requiring a mention) when the message contains one of these keywords, case-insensitive — independent of the keywords field above')
+    }).nullable().optional().describe('Per-subscription reflex-engagement override; null clears it (reverts to the global mention-only default)')
   }),
   run: async ({ id, ...patch }) => {
     const { subscription } = await gatewayRequest<SubscriptionResult>('subscriptions.update', { id, patch: patch satisfies SubscriptionPatch })

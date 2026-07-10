@@ -164,6 +164,7 @@ export class MessageWatcher implements GatewayHost {
       onEventCommand: input.onEventCommand,
       webhookUrl: input.webhookUrl,
       webhookSecret: input.webhookSecret,
+      reflexTrigger: input.reflexTrigger,
       createdAt: new Date().toISOString()
     }
     new TokenClient(TENANT_USER_ID).addSubscription(subscription)
@@ -355,9 +356,11 @@ export class MessageWatcher implements GatewayHost {
       this.recent.unshift({ receivedAt: record.receivedAt, chatId: record.chatId, text: record.text.slice(0, 200) })
       this.recent = this.recent.slice(0, 10)
 
-      // A message is "engaged" when it directly @-mentions the bot, or is a reply in a thread that a mention started.
-      const engaged = mentionedBot || this.isEngagedThread(message)
-      if (engaged) { this.engageThread(message) }
+      // A message is "engaged" when it directly @-mentions the bot, is a reply in a thread that a mention started,
+      // or a matched subscription's reflexTrigger opts it in regardless of mention.
+      const mentionEngaged = mentionedBot || this.isEngagedThread(message)
+      const engaged = mentionEngaged || matched.some((s) => this.reflexTriggerEngages(s, text))
+      if (mentionEngaged) { this.engageThread(message) }
 
       const reflex = config.reflex
       const senderOpenId = data.sender.sender_id?.open_id
@@ -445,6 +448,15 @@ export class MessageWatcher implements GatewayHost {
     if (subscription.mentionBot && !mentionedBot) { return false }
     if (subscription.keywords?.length && !subscription.keywords.some((k) => text.toLowerCase().includes(k.toLowerCase()))) { return false }
     return true
+  }
+
+  /** Whether a matched subscription's reflexTrigger pulls this message into reflex engagement without a mention. */
+  private reflexTriggerEngages(subscription: MessageSubscription, text: string): boolean {
+    const trigger = subscription.reflexTrigger
+    if (!trigger) { return false }
+    if (trigger.alwaysEngage) { return true }
+    if (trigger.keywords?.length) { return trigger.keywords.some((k) => text.toLowerCase().includes(k.toLowerCase())) }
+    return false
   }
 
   private dispatchCommand(subscription: MessageSubscription, record: MessageEventRecord, ackMessageId?: string) {

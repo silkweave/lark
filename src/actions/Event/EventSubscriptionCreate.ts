@@ -13,7 +13,11 @@ export const EventSubscriptionCreate = createAction({
     keywords: z.array(z.string()).optional().describe('Only match messages containing at least one of these keywords (case-insensitive)'),
     onEventCommand: z.string().optional().describe('Shell command spawned (detached) per matching message; event details are passed via LARK_* env vars (LARK_EVENT_JSON, LARK_HISTORY_JSON, LARK_CHAT_ID, LARK_TEXT, ...)'),
     webhookUrl: z.string().optional().describe('URL POSTed with { subscriptionId, event, history } per matching message — an alternative/addition to onEventCommand for a persistent listener instead of spawning a process per message'),
-    webhookSecret: z.string().optional().describe('Sent as the X-Silkweave-Signature header on webhook requests so the receiver can verify authenticity')
+    webhookSecret: z.string().optional().describe('Sent as the X-Silkweave-Signature header on webhook requests so the receiver can verify authenticity'),
+    reflexTrigger: z.object({
+      alwaysEngage: z.boolean().optional().describe('Engage the reflex fast-responder on every message this subscription matches, without requiring an @-mention'),
+      keywords: z.array(z.string()).optional().describe('Engage the reflex (without requiring a mention) when the message contains one of these keywords, case-insensitive — independent of the keywords field above')
+    }).optional().describe('Per-subscription override for when the reflex fast-responder engages, independent of the global default (a direct @-mention, or a reply in a mention-started thread required)')
   }),
   run: async (input) => {
     const { subscription } = await gatewayRequest<SubscriptionResult>('subscriptions.add', input)

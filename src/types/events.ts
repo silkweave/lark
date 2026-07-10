@@ -14,7 +14,17 @@ export interface MessageSubscription {
   webhookUrl?: string
   /** Sent as the X-Silkweave-Signature header on webhook requests so the receiver can verify authenticity */
   webhookSecret?: string
+  /** Per-subscription override for when the reflex fast-responder engages with messages matched by this subscription — independent of `mentionBot`/`keywords` above, which only gate dispatch (onEventCommand/webhook). Omit to keep the default (a direct @-mention, or a reply in a mention-started thread, is required). */
+  reflexTrigger?: ReflexTrigger
   createdAt: string
+}
+
+/** Additive override letting a subscription pull messages into reflex engagement without a mention (see MessageSubscription.reflexTrigger) */
+export interface ReflexTrigger {
+  /** Engage the reflex on every message this subscription matches, without requiring an @-mention. Default false. */
+  alwaysEngage?: boolean
+  /** Engage the reflex (without requiring a mention) when the message contains one of these keywords, case-insensitive. Independent of the subscription's own `keywords` field. */
+  keywords?: string[]
 }
 
 /** Config for the Haiku "reflex" fast-response dispatcher (see src/lib/reflex.ts) */

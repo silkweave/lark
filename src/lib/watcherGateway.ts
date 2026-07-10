@@ -93,7 +93,7 @@ export function createLineDecoder(maxLineBytes = MAX_LINE_BYTES): LineDecoder {
 /** Apply SubscriptionPatch semantics: present & non-null → set; null → clear; omitted → unchanged. */
 export function applySubscriptionPatch(subscription: MessageSubscription, patch: SubscriptionPatch): MessageSubscription {
   const next: Record<string, unknown> = { ...subscription }
-  const keys = ['chatId', 'chatName', 'mentionBot', 'keywords', 'onEventCommand', 'webhookUrl', 'webhookSecret'] as const
+  const keys = ['chatId', 'chatName', 'mentionBot', 'keywords', 'onEventCommand', 'webhookUrl', 'webhookSecret', 'reflexTrigger'] as const
   for (const key of keys) {
     const value = patch[key]
     if (value === undefined) { continue }
