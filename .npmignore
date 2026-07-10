@@ -1,0 +1,16 @@
+.vscode/
+src/
+docs/
+_docs/
+tests/
+pnpm-workspace.yaml
+.mcp.json
+tsconfig.tsbuildinfo
+CLAUDE.md
+.claude/settings.local.json
+eslint.config.mjs
+tsconfig.json
+tsdown.config.ts
+lark.json
+.env*
+.claude/
