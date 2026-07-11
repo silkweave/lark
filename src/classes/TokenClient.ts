@@ -1,10 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { AppType, Client, Domain, LoggerLevel, withTenantToken, withUserAccessToken } from '@larksuiteoapi/node-sdk'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
-import { homedir } from 'os'
-import { dirname, join } from 'path'
+import { dirname } from 'path'
 import { buildLarkUrl, fetchLark, parseLarkResponse } from '../lib/api.js'
 import { withFileLock } from '../lib/fileLock.js'
+import { CONFIG_PATH } from '../lib/paths.js'
 import { scopes } from '../lib/scopes.js'
 import { LarkResponse } from '../types/api.js'
 import { MessageSubscription, WatcherConfig } from '../types/events.js'
@@ -42,7 +42,7 @@ export class TokenClient {
   private storePath: string
   private registry: TokenRegistry
 
-  constructor(key = 'default', storePath = join(homedir(), '.silkweave-lark.json')) {
+  constructor(key = 'default', storePath = CONFIG_PATH) {
     this.key = key
     this.storePath = storePath
     this.registry = this.readRegistry()

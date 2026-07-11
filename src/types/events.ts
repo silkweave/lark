@@ -31,7 +31,7 @@ export interface ReflexTrigger {
 export interface ReflexConfig {
   /** Enable the reflex: on a direct @-mention (or a reply in a mention-started thread), classify the message and respond instantly */
   enabled?: boolean
-  /** Anthropic API key for the reflex, persisted to ~/.silkweave-lark.json. Required whenever reflex is enabled. */
+  /** Anthropic API key for the reflex, persisted to ~/.config/silkweave-lark-mcp/config.json. Required whenever reflex is enabled. */
   apiKey?: string
   /** Anthropic model id for the reflex (default 'claude-haiku-4-5') */
   model?: string

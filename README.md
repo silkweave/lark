@@ -64,10 +64,12 @@ Once the MCP server is running, use the authentication tools to connect:
 
 1. **Call `AuthenAuthorize`** with your `clientId` and `clientSecret` -- this saves your app credentials and returns an OAuth URL
 2. **Open the URL** in a browser -- Lark asks you to authorize the app, then redirects to `http://localhost:3000/callback?code=<CODE>` (copy the code from the URL)
-3. **Call `AuthenOauthToken`** with the `code` -- tokens are stored in `~/.silkweave-lark.json`
+3. **Call `AuthenOauthToken`** with the `code` -- tokens are stored in `~/.config/silkweave-lark-mcp/config.json`
 4. **Call `AuthenUserInfo`** to verify -- you should see your name and email
 
-That's it. All subsequent tool calls are authenticated automatically. Credentials persist across sessions in `~/.silkweave-lark.json`.
+That's it. All subsequent tool calls are authenticated automatically. Credentials persist across sessions in `~/.config/silkweave-lark-mcp/config.json`.
+
+> **Where state lives:** everything the package persists — credentials/tokens (`config.json`), the event log (`events.jsonl`), chat history (`history.jsonl`), pending indicator cards (`pending-acks.json`), sideloaded `attachments/`, and the watcher's runtime files (`watcher.pid`, `watcher.status.json`, `watcher.sock`) — lives in one directory: `$XDG_CONFIG_HOME/silkweave-lark-mcp`, defaulting to `~/.config/silkweave-lark-mcp/`.
 
 > **Bot-only usage:** if you only need bot-level access (tenant token), steps 2-4 of the OAuth flow are optional — call `AuthenAuthorize` once with `clientId`/`clientSecret` to save the app credentials, then pass `userId: 'tenant'` to any tool.
 
@@ -125,7 +127,7 @@ Pass any other value (default: `'default'`) to act as an OAuth-authenticated use
 
 ## Message Event Subscriptions
 
-The message watcher receives incoming messages over Lark's **WebSocket long connection** — no public webhook URL required. Messages matching a subscription are appended to a local event log (`~/.silkweave-lark.events.jsonl`, readable via `EventList`) and can optionally trigger a shell command per event.
+The message watcher receives incoming messages over Lark's **WebSocket long connection** — no public webhook URL required. Messages matching a subscription are appended to a local event log (`~/.config/silkweave-lark-mcp/events.jsonl`, readable via `EventList`) and can optionally trigger a shell command per event.
 
 ### Lark app prerequisites
 
@@ -144,7 +146,7 @@ EventSubscriptionCreate { "chatId": "oc_xxx", "mentionBot": true }
 
 Filters are optional and combine with AND: `chatId` (specific chat), `mentionBot` (only @-mentions of the bot), `keywords` (case-insensitive match). Omit all filters to record every message the bot receives. `onEventCommand` spawns a detached shell command per matching message with `LARK_*` env vars (`LARK_EVENT_JSON`, `LARK_HISTORY_JSON`, `LARK_ATTACHMENTS_JSON`, `LARK_CHAT_ID`, `LARK_TEXT`, `LARK_MESSAGE_ID`, `LARK_SENDER_OPEN_ID`, `LARK_MENTIONED_BOT`, `LARK_SUBSCRIPTION_ID`, `LARK_ACK_MESSAGE_ID`) — use it to notify or kick off an agent. `webhookUrl` instead POSTs `{ subscriptionId, event, history, ackMessageId? }` to a persistent listener (optionally signed via `webhookSecret`) — the receiver should acknowledge with a 2xx immediately and run its workload (e.g. a `claude -p` run) asynchronously, replying via the `ImMessageReply` tool.
 
-Subscription CRUD (`EventSubscriptionCreate` / `EventSubscriptionUpdate` / `EventSubscriptionDelete`) and reflex config (`EventReflexConfigure`) are applied **live on the running watcher** over its control gateway and persisted to `~/.silkweave-lark.json` — no restart, id-stable updates, safe under concurrent MCP agents. These mutations require the watcher to be running; `EventSubscriptionList` and `EventWatchStatus` fall back to file reads when it isn't.
+Subscription CRUD (`EventSubscriptionCreate` / `EventSubscriptionUpdate` / `EventSubscriptionDelete`) and reflex config (`EventReflexConfigure`) are applied **live on the running watcher** over its control gateway and persisted to `~/.config/silkweave-lark-mcp/config.json` — no restart, id-stable updates, safe under concurrent MCP agents. These mutations require the watcher to be running; `EventSubscriptionList` and `EventWatchStatus` fall back to file reads when it isn't.
 
 ### Running the watcher
 
@@ -166,7 +168,7 @@ Run `lark-serve --help` for all reflex flags. Ways to run it:
 
 **For AI agents:** you cannot start the watcher through an MCP tool — spawn it as a normal background process (e.g. a background shell running `lark-serve`), then poll `EventWatchStatus`. When the watcher is down, `EventWatchStatus` returns `running: false` with a `notRunningReason` that contains the exact command to run.
 
-Only one watcher may run at a time, guarded by the pidfile `~/.silkweave-lark.watcher.pid` and by the control socket. Stop it with `Ctrl-C` or `kill $(cat ~/.silkweave-lark.watcher.pid)`.
+Only one watcher may run at a time, guarded by the pidfile `~/.config/silkweave-lark-mcp/watcher.pid` and by the control socket. Stop it with `Ctrl-C` or `kill $(cat ~/.config/silkweave-lark-mcp/watcher.pid)`.
 
 An example `launchd` agent for always-on operation (`~/Library/LaunchAgents/com.silkweave.lark-serve.plist`):
 
@@ -189,9 +191,9 @@ Load with `launchctl load ~/Library/LaunchAgents/com.silkweave.lark-serve.plist`
 
 ### The control gateway
 
-While running, the watcher hosts a **control gateway** on a Unix domain socket at `~/.silkweave-lark.watcher.sock` (mode 0600, same-user only — never exposed over TCP). The protocol is newline-delimited JSON: request/response methods (`ping`, `status`, `subscriptions.list/add/update/remove`, `reflex.get/set`, `reconnect`) plus a `subscribe` method that turns the connection into a live event stream. MCP `Event*` tools are thin clients of this socket; the watcher is the single authority for its own config while running, so concurrent agents can't lose each other's updates. Live status (`status`) includes `wsConnected` and `activeStreams` on top of the heartbeat counters.
+While running, the watcher hosts a **control gateway** on a Unix domain socket at `~/.config/silkweave-lark-mcp/watcher.sock` (mode 0600, same-user only — never exposed over TCP). The protocol is newline-delimited JSON: request/response methods (`ping`, `status`, `subscriptions.list/add/update/remove`, `reflex.get/set`, `reconnect`) plus a `subscribe` method that turns the connection into a live event stream. MCP `Event*` tools are thin clients of this socket; the watcher is the single authority for its own config while running, so concurrent agents can't lose each other's updates. Live status (`status`) includes `wsConnected` and `activeStreams` on top of the heartbeat counters.
 
-The heartbeat file (`~/.silkweave-lark.watcher.status.json`) is still written every few seconds for external monitors and as the read-only fallback when the watcher is down.
+The heartbeat file (`~/.config/silkweave-lark-mcp/watcher.status.json`) is still written every few seconds for external monitors and as the read-only fallback when the watcher is down.
 
 ### Streaming events (`lark-listen`)
 
@@ -212,7 +214,7 @@ Each line is `{ event, history?, reflex? }` — `reflex` carries the fast-respon
 
 ### Attachments
 
-When an inbound message carries resources — an `image`, `file`, `media` (video) or `audio` message, or images embedded in a rich-text `post` — the watcher **sideloads** them: each resource is downloaded (requires the `im:resource` app permission) to `~/.silkweave-lark.attachments/<messageId>/` and referenced as `attachments: [{ key, type, name, path, size, mimeType }]` on the event record, the webhook payload, `LARK_ATTACHMENTS_JSON`, and the shared history log (so a delegated agent sees an image sent *before* the follow-up question, e.g. a photo of a cat followed by "what animal is this?" — it just reads the local `path`). Sideloading happens for any message in a chat covered by at least one subscription; the extracted `text` for attachment messages is a readable placeholder (`[image]`, `[file: report.pdf]`, …) and `post` messages are rendered as plain text with inline placeholders. Sideloaded copies are working files, not an archive: the watcher sweeps per-message directories older than 7 days.
+When an inbound message carries resources — an `image`, `file`, `media` (video) or `audio` message, or images embedded in a rich-text `post` — the watcher **sideloads** them: each resource is downloaded (requires the `im:resource` app permission) to `~/.config/silkweave-lark-mcp/attachments/<messageId>/` and referenced as `attachments: [{ key, type, name, path, size, mimeType }]` on the event record, the webhook payload, `LARK_ATTACHMENTS_JSON`, and the shared history log (so a delegated agent sees an image sent *before* the follow-up question, e.g. a photo of a cat followed by "what animal is this?" — it just reads the local `path`). Sideloading happens for any message in a chat covered by at least one subscription; the extracted `text` for attachment messages is a readable placeholder (`[image]`, `[file: report.pdf]`, …) and `post` messages are rendered as plain text with inline placeholders. Sideloaded copies are working files, not an archive: the watcher sweeps per-message directories older than 7 days.
 
 ## Tools Reference
 
@@ -797,7 +799,7 @@ src/
     Mcp/            # Server management
     Wiki/           # Wiki spaces and nodes
   classes/
-    TokenClient.ts  # User and tenant agnostic token persistence client (~/.silkweave-lark.json)
+    TokenClient.ts  # User and tenant agnostic token persistence client (~/.config/silkweave-lark-mcp/config.json)
     DocxParser.ts   # Lark blocks -> Markdown converter
   parser/           # Block type parsers (text, heading, list, table, etc.)
   types/            # TypeScript type definitions (incl. gateway protocol in types/gateway.ts)

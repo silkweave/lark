@@ -1,16 +1,13 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'fs'
-import { homedir } from 'os'
-import { join } from 'path'
 import { withFileLock } from './fileLock.js'
-
-/**
+/*
  * Cross-process registry of in-flight processing-indicator cards (see src/lib/indicator.ts).
  * The reflex registers a card here when it hands a task off to the heavy workload; whichever process
  * later replies in that chat (ImMessageSend/ImMessageReply from the MCP server, CLI, or a spawned
  * onEventCommand) takes the entries and morphs the cards into their final state. The watcher sweeps
  * stale entries on its heartbeat so an indicator never outlives a workload that died without replying.
  */
-export const PENDING_ACKS_PATH = join(homedir(), '.silkweave-lark.pending-acks.json')
+import { PENDING_ACKS_PATH } from './paths.js'
 
 export interface PendingAck {
   chatId: string

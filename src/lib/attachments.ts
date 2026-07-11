@@ -1,20 +1,18 @@
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs'
-import { homedir } from 'os'
 import { basename, join } from 'path'
 import { MessageAttachment } from '../types/events.js'
+import { ATTACHMENTS_DIR } from './paths.js'
 
 /**
  * Attachment sideloading: message resources (images, files, media, audio — including images inside
  * rich-text `post` messages) are downloaded by the watcher to local disk so delegated agents can read
  * them directly (e.g. `Read /path/to/image.png` to answer "what animal is this?"). Sideloaded copies
- * land in ~/.silkweave-lark.attachments/<messageId>/ and are referenced from the event record
+ * land in ATTACHMENTS_DIR/<messageId>/ and are referenced from the event record
  * (`event.attachments`), the shared history log, the webhook payload, and `LARK_ATTACHMENTS_JSON`.
  * The watcher's heartbeat sweeps message directories older than the retention window.
  */
 
 const LARK_BASE = 'https://open.larksuite.com/open-apis'
-
-export const ATTACHMENTS_DIR = join(homedir(), '.silkweave-lark.attachments')
 /** Sideloaded copies older than this are removed by the watcher's sweep — attachments are working files, not an archive. */
 export const ATTACHMENT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 /** The watcher heartbeat runs the sweep at most this often. */

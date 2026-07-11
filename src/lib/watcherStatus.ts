@@ -1,17 +1,7 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'fs'
-import { homedir } from 'os'
-import { join } from 'path'
 import { TENANT_USER_ID, TokenClient } from '../classes/TokenClient.js'
 import { WatcherStatus } from '../types/events.js'
-
-/** Pidfile written by the running watcher process (lark-serve). The single source of "who is running". */
-export const PID_PATH = join(homedir(), '.silkweave-lark.watcher.pid')
-/** Heartbeat/status file the running watcher rewrites so any other process can report accurate counters without owning the watcher. */
-export const STATUS_PATH = join(homedir(), '.silkweave-lark.watcher.status.json')
-/** Unix domain socket the running watcher's control gateway listens on (0600; connectability = liveness). */
-export const SOCK_PATH = join(homedir(), '.silkweave-lark.watcher.sock')
-/** Append-only log of matched message events, written by the watcher and read by EventList + stream replay. */
-export const EVENTS_PATH = join(homedir(), '.silkweave-lark.events.jsonl')
+import { displayPath, PID_PATH, STATUS_PATH } from './paths.js'
 
 /** How often the running watcher rewrites its heartbeat/status file. */
 export const HEARTBEAT_MS = 10000
@@ -29,7 +19,7 @@ export const START_HINT =
   '(EventSubscriptionCreate/Update/Delete, EventReflexConfigure, EventWatchReconnect). ' +
   '`--reflex --api-key <key> --playbook <file>` remain optional pre-seeds. ' +
   'Background it for a session (e.g. `lark-serve &`) or supervise with launchd/systemd for always-on. ' +
-  'Stop it with Ctrl-C or `kill $(cat ~/.silkweave-lark.watcher.pid)`.'
+  `Stop it with Ctrl-C or \`kill $(cat ${displayPath(PID_PATH)})\`.`
 
 /** Snapshot the running watcher persists to STATUS_PATH on a heartbeat and after each event. */
 export interface WatcherStatusFile {

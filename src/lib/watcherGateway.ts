@@ -21,7 +21,7 @@ import {
   SubscriptionPatch
 } from '../types/gateway.js'
 import { readHistory } from './history.js'
-import { EVENTS_PATH, SOCK_PATH } from './watcherStatus.js'
+import { EVENTS_PATH, SOCK_PATH } from './paths.js'
 
 /** Gateway logging goes to stderr — stdout is reserved for the MCP stdio protocol */
 const log = {

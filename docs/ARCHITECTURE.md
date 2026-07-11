@@ -120,7 +120,7 @@ flowchart TB
 
     LL["📻 lark-listen / streamEvents()<br/>persistent stream client, auto-reconnect + sinceTs replay"]
 
-    subgraph FILES["🗂️ Shared state — ~/.silkweave-lark.*  — boot store + read-only fallback"]
+    subgraph FILES["🗂️ Shared state — ~/.config/silkweave-lark-mcp/*  — boot store + read-only fallback"]
         CFG[("config.json<br/>subscriptions · reflex · tokens<br/>writes: file-locked + atomic rename")]
         HIST[("history.jsonl<br/>user / reflex / agent")]
         EVT[("events.jsonl<br/>matched events")]
@@ -172,7 +172,7 @@ flowchart TB
 
 **Annotations**
 
-- **The gateway is the control plane.** The running watcher hosts a Unix-domain-socket server (`~/.silkweave-lark.watcher.sock`, mode 0600, NDJSON request/response — see `src/types/gateway.ts`). MCP `Event*` tools are thin clients (`src/lib/watcherClient.ts`): connect, one request, one response, close. Detection = "can I connect?". The watcher is the **single applier** of subscription/reflex config while running — mutations are serialized on its event loop (no lost updates between concurrent MCP agents) and persisted to `config.json` via a file-locked, atomic-rename write.
+- **The gateway is the control plane.** The running watcher hosts a Unix-domain-socket server (`~/.config/silkweave-lark-mcp/watcher.sock`, mode 0600, NDJSON request/response — see `src/types/gateway.ts`). MCP `Event*` tools are thin clients (`src/lib/watcherClient.ts`): connect, one request, one response, close. Detection = "can I connect?". The watcher is the **single applier** of subscription/reflex config while running — mutations are serialized on its event loop (no lost updates between concurrent MCP agents) and persisted to `config.json` via a file-locked, atomic-rename write.
 - **Watcher-down behavior:** mutations (`subscriptions.add/update/remove`, `reflex.set`, `reconnect`) **hard-fail** with the exact start command (`START_HINT`); read-only tools (`EventWatchStatus`, `EventSubscriptionList`) fall back to the heartbeat/config files (dotted arrows).
 - **Event streaming:** a persistent client `subscribe`s with a filter (`deliver: matched|all`, chatId, subscriptionId, mentionedBot, includeHistory) and receives each event as a frame *after* the watcher finishes processing it — including the reflex outcome. Reconnects pass the last-seen `receivedAt` as `sinceTs`; the gateway replays matched events from `events.jsonl` (inclusive bound, client dedupes by messageId) so matched delivery is gap-free across watcher restarts. Slow consumers get an `overflow` frame and are disconnected (they catch up via `sinceTs`); heartbeat frames flow every 15 s.
 - **The token store is still multi-writer** (MCP OAuth, watcher token refresh) — every `TokenClient` mutation re-reads the file under an `O_EXCL` lockfile (`withFileLock`, stale takeover after 10 s), applies the change to fresh state, and atomic-writes. This closes the token-refresh-vs-OAuth clobber independent of the gateway.
@@ -191,4 +191,4 @@ lark-serve --reflex --api-key sk-ant-... --playbook ./playbook.md   # optional p
 lark-listen --all                            # stream every inbound message as NDJSON
 ```
 
-Stop with `Ctrl-C` or `kill $(cat ~/.silkweave-lark.watcher.pid)`. Check it with the `EventWatchStatus` tool — when it's down, `notRunningReason` carries the exact start command.
+Stop with `Ctrl-C` or `kill $(cat ~/.config/silkweave-lark-mcp/watcher.pid)`. Check it with the `EventWatchStatus` tool — when it's down, `notRunningReason` carries the exact start command.

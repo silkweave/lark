@@ -3,5 +3,5 @@ export const INDICATOR_IMAGE_BASE64 = 'UklGRsoSAABXRUJQVlA4WAoAAAASAAAAPwAAPwAAQ
 
 export const INDICATOR_IMAGE_MIME = 'image/webp'
 
-/** Bump when the asset changes — keys the upload-once image_key cache in ~/.silkweave-lark.json */
+/** Bump when the asset changes — keys the upload-once image_key cache in ~/.config/silkweave-lark-mcp/config.json */
 export const INDICATOR_ASSET_VERSION = 'ball-webp-v1'

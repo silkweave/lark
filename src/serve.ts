@@ -1,13 +1,14 @@
 import { readFileSync } from 'fs'
 import { TENANT_USER_ID, TokenClient } from './classes/TokenClient.js'
 import { messageWatcher } from './lib/messageWatcher.js'
+import { CONFIG_PATH, displayPath, SOCK_PATH } from './lib/paths.js'
 import { ReflexConfig } from './types/events.js'
 
 const USAGE = `lark-serve — Lark message watcher + reflex fast-responder
 
 Usage: lark-serve [options]
 
-Reflex options (all optional; persisted to ~/.silkweave-lark.json):
+Reflex options (all optional; persisted to ${displayPath(CONFIG_PATH)}):
   --reflex, --enable-reflex     Enable the Haiku reflex fast-responder
   --no-reflex, --disable-reflex Disable the reflex
   --api-key <key>               Anthropic API key for the reflex (required whenever reflex is enabled)
@@ -59,7 +60,7 @@ async function main() {
     console.error('[silkweave-lark] No subscriptions configured yet — add one live via EventSubscriptionCreate (MCP) or the control gateway once the watcher is up (until then, events are not recorded)')
   }
   const status = await messageWatcher.start()
-  console.log(`[silkweave-lark] Message watcher running (pid ${process.pid}, bot: ${status.botName ?? 'unknown'}, ${status.subscriptions} subscriptions, gateway: ~/.silkweave-lark.watcher.sock)`)
+  console.log(`[silkweave-lark] Message watcher running (pid ${process.pid}, bot: ${status.botName ?? 'unknown'}, ${status.subscriptions} subscriptions, gateway: ${displayPath(SOCK_PATH)})`)
   if (status.reflex) {
     console.log(`[silkweave-lark] Reflex ${status.reflex.enabled ? 'enabled' : 'disabled'} (model: ${status.reflex.model}, apiKey: ${status.reflex.hasApiKey ? 'set' : 'missing'}, playbook: ${status.reflex.hasPlaybook ? 'set' : 'none'})`)
   }

@@ -1,10 +1,7 @@
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'fs'
-import { homedir } from 'os'
-import { join } from 'path'
 import { HistoryEntry } from '../types/events.js'
-
-/** Shared, cross-process rolling chat history — every inbound message, reflex reply, and agent reply is appended here (all processes: lark-serve, the MCP server, the CLI) so context can be reconstructed regardless of who is asking. */
-export const HISTORY_PATH = join(homedir(), '.silkweave-lark.history.jsonl')
+// Shared, cross-process rolling chat history — every inbound message, reflex reply, and agent reply is appended here (all processes: lark-serve, the MCP server, the CLI) so context can be reconstructed regardless of who is asking.
+import { HISTORY_PATH } from './paths.js'
 
 const MAX_LINES = 4000
 const TRIM_TO = 1500

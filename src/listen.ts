@@ -1,10 +1,10 @@
+import { displayPath, SOCK_PATH } from './lib/paths.js'
 import { streamEvents } from './lib/watcherClient.js'
-import { SOCK_PATH } from './lib/watcherStatus.js'
 import { StreamFilter } from './types/gateway.js'
 
 const USAGE = `lark-listen — stream watcher events as NDJSON (one JSON payload per line on stdout)
 
-Connects to the running lark-serve watcher's control gateway (${SOCK_PATH}) and prints each
+Connects to the running lark-serve watcher's control gateway (${displayPath(SOCK_PATH)}) and prints each
 matching event as it arrives. Auto-reconnects with sinceTs replay, so delivery is gap-free across
 watcher restarts. Connection notices go to stderr; stdout carries only event payloads.
 

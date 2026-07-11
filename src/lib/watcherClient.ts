@@ -11,8 +11,9 @@ import {
   StreamMessagePayload,
   STREAM_DEAD_AFTER_MS
 } from '../types/gateway.js'
+import { SOCK_PATH } from './paths.js'
 import { createLineDecoder, encodeFrame } from './watcherGateway.js'
-import { SOCK_PATH, START_HINT } from './watcherStatus.js'
+import { START_HINT } from './watcherStatus.js'
 
 /** How many recently-seen messageIds a stream remembers to dedupe `sinceTs` replay overlap. */
 const DEDUPE_WINDOW = 200

@@ -72,7 +72,7 @@ export function buildReplyCard(text: string) {
   }
 }
 
-/** Upload the embedded spinner animation once and cache its image_key in ~/.silkweave-lark.json, keyed by asset version. */
+/** Upload the embedded spinner animation once and cache its image_key in ~/.config/silkweave-lark-mcp/config.json, keyed by asset version. */
 async function ensureIndicatorImageKey(client: TokenClient): Promise<string | undefined> {
   const cached = client.getWatcherConfig().indicatorImage
   if (cached?.assetVersion === INDICATOR_ASSET_VERSION) { return cached.imageKey }

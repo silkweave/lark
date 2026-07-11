@@ -11,7 +11,8 @@ import { resolveIndicatorCard, STALE_TEXT } from './indicator.js'
 import { listPendingAcks, takeStalePendingAcks } from './pendingAcks.js'
 import { runReflex } from './reflex.js'
 import { applySubscriptionPatch, GatewayError, GatewayHost, WatcherGateway } from './watcherGateway.js'
-import { clearWatcherStatus, EVENTS_PATH, HEARTBEAT_MS, isProcessAlive, PID_PATH, writeWatcherStatus } from './watcherStatus.js'
+import { EVENTS_PATH, PID_PATH } from './paths.js'
+import { clearWatcherStatus, HEARTBEAT_MS, isProcessAlive, writeWatcherStatus } from './watcherStatus.js'
 
 export { EVENTS_PATH }
 const DISPATCH_HISTORY_LIMIT = 20
