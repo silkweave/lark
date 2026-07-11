@@ -17,7 +17,7 @@
     "**/.DS_Store": true,
     "**/.git": true,
     "**/node_modules": true,
-    "**/tsconfig.tsbuildinfo": false,
+    "**/tsconfig.tsbuildinfo": true,
     "**/build": true
   },
   "files.insertFinalNewline": true,

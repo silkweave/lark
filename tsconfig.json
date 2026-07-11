@@ -14,9 +14,9 @@
     "resolveJsonModule": true,
     "composite": true,
     "declaration": true,
-    "declarationMap": true,
+    "declarationMap": false,
     "emitDeclarationOnly": false,
-    "sourceMap": true
+    "sourceMap": false
   },
   "include": ["src"],
   "exclude": ["node_modules", "build"]

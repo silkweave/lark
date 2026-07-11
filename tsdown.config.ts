@@ -3,10 +3,8 @@ import pkg from './package.json' with { type: "json" }
 
 const shared: UserConfig = {
   outDir: 'build',
-  sourcemap: true,
-  dts: {
-    resolver: 'tsc'
-  },
+  sourcemap: false,
+  dts: { resolver: 'tsc' },
   deps: { neverBundle: ['zod'] },
   format: ['esm'],
   define: { __VERSION__: JSON.stringify(pkg.version) },

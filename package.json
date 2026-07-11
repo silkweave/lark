@@ -9,6 +9,9 @@
     "url": "git+ssh://git@github.com/silkweave/lark.git"
   },
   "type": "module",
+  "files": [
+    "build"
+  ],
   "main": "./build/index.mjs",
   "types": "./build/index.d.mts",
   "bin": {
